@@ -65,11 +65,12 @@
     private bool _busy;
     private string? _error;
 
-    protected override void OnInitialized()
+    protected override void OnAfterRender(bool firstRender)
     {
         // A restored token means the startup path already signed this user in; landing here
-        // again would be a dead end with no way forward.
-        if (AuthState.IsAuthenticated)
+        // again would be a dead end with no way forward. Done after the first render rather
+        // than in OnInitialized so the renderer is ready to process the navigation.
+        if (firstRender && AuthState.IsAuthenticated)
         {
             Navigation.NavigateTo("/");
         }
@@ -80,30 +81,38 @@
         _busy = true;
         _error = null;
 
+        bool succeeded;
+
         try
         {
-            var succeeded = await Auth.SignInAsync(_model.Email, _model.Password);
+            succeeded = await Auth.SignInAsync(_model.Email, _model.Password);
 
-            if (succeeded)
+            if (!succeeded)
             {
-                // Cleared rather than left bound: the password should not survive in memory
-                // on a component the router may keep alive.
-                _model.Password = string.Empty;
-                Navigation.NavigateTo("/");
-                return;
+                _error = "Sign-in failed. Check the email and password and try again.";
             }
-
-            _error = "Sign-in failed. Check the email and password and try again.";
         }
         catch (Exception ex)
         {
             // An unreachable server is the common case here and is worth distinguishing
             // from rejected credentials, since the fix is entirely different.
             _error = $"Could not reach the server. {ex.Message}";
+            succeeded = false;
         }
         finally
         {
             _busy = false;
+        }
+
+        // Deliberately outside the try: NavigateTo signals via an exception in some Blazor
+        // hosts, which the catch above would otherwise report as an unreachable server
+        // immediately after a successful sign-in.
+        if (succeeded)
+        {
+            // Cleared rather than left bound: the password should not survive in memory
+            // on a component the router may keep alive.
+            _model.Password = string.Empty;
+            Navigation.NavigateTo("/");
         }
     }
 
