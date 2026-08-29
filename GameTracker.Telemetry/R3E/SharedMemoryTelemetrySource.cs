@@ -147,6 +147,11 @@ public sealed class SharedMemoryTelemetrySource : ITelemetrySource, IDisposable
         LapTimeCurrent = R3EValue.ToNullable(shared.LapTimeCurrentSelf),
         LapTimeBest = R3EValue.ToNullable(shared.LapTimeBestSelf),
 
+        LapTimePrevious = R3EValue.ToNullable(shared.LapTimePreviousSelf),
+        PreviousSector1 = R3EValue.ToNullable(shared.SectorTimesPreviousSelf.Sector1),
+        PreviousSector2 = R3EValue.ToNullable(shared.SectorTimesPreviousSelf.Sector2),
+        PreviousSector3 = R3EValue.ToNullable(shared.SectorTimesPreviousSelf.Sector3),
+
         Sector1 = R3EValue.ToNullable(shared.SectorTimesCurrentSelf.Sector1),
         Sector2 = R3EValue.ToNullable(shared.SectorTimesCurrentSelf.Sector2),
         Sector3 = R3EValue.ToNullable(shared.SectorTimesCurrentSelf.Sector3),

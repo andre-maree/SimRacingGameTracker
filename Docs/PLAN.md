@@ -239,11 +239,17 @@ This is the living implementation checklist for the GameTracker technical test. 
 - Uses `ThrottleRaw`/`BrakeRaw`/`SteerInputRaw` — a driver input trace wants the inputs before assists
 - Registered as a singleton in the WPF host because it owns the memory-mapped handle
 
-### ⏳ Step 27: Implement SessionStateMachine
-- Monotonic-time restart guard
-- Latched lap validity
-- Pit-driven stint boundaries
-- Menu/disconnect close path
+### ✅ Step 27: Implement SessionStateMachine
+- `GameTracker.Telemetry/Recording/SessionStateMachine.cs` — a **pure** state machine: no database, no clock of its own, no I/O, so the awkward cases (restart, quit mid-lap, pit cycle) are testable without RaceRoom running
+- The core difficulty is that RaceRoom announces nothing: there is no "session started" flag, so every transition is *inferred* from the few dependable signals
+- **Monotonic-time restart guard**: `GameSimulationTime` decreasing by more than 0.5s means a restart. This is the case that silently corrupts data if missed — laps from the new run would otherwise be appended to the old session — and simulation time is the only reliable signal, since car and track are unchanged across a restart. The tolerance absorbs the occasional stale frame
+- **Latched lap validity**: R3E reports validity for the lap *in progress* and often clears a cut before the line, so one invalid frame condemns the whole lap, which matches driver expectation
+- **Pit-driven stint boundaries**: pit entry ends the stint, pit exit starts the next one flagged as an out-lap. `_currentLapTouchedPits` keeps in/out laps from ever being presented as flying laps
+- **Menu/disconnect close path**: a menu frame ends the session as `Abandoned`; `Disconnect()` is a separate entry point because a disconnect is the *absence* of frames and cannot be inferred from one
+- A lap in progress at session end is emitted as `PartialLapDiscarded`, never saved with a guessed time — a truncated lap looks real in a results table, which is worse than an explicit gap
+- Lap times come from `LapTimePreviousSelf`/`SectorTimesPreviousSelf` (added to `TelemetryFrame` in this step): at 60 Hz the *current* lap time is always sampled shortly before the line and under-reports by up to a frame
+- `_lastCompletedLaps` is anchored to the game's own counter on session start, so joining a session already in progress does not replay laps that were already driven
+- `Process` returns a list because one frame can legitimately produce several events — a restart closes a lap, a stint and a session, then opens new ones
 
 ### ⏳ Step 28: Implement SessionRecorder pipeline
 - Bounded Channel<TelemetryFrame>

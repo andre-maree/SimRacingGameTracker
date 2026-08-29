@@ -49,6 +49,20 @@ public sealed record TelemetryFrame
 
     public double? LapTimeBest { get; init; }
 
+    /// <summary>
+    /// The game's own time for the lap just completed. Preferred over the last observed
+    /// <see cref="LapTimeCurrent"/> when closing a lap: polling at 60 Hz means the current
+    /// time is always sampled slightly before the line, so it under-reports by up to a frame.
+    /// </summary>
+    public double? LapTimePrevious { get; init; }
+
+    /// <summary>Cumulative sector times for the lap just completed, in seconds.</summary>
+    public double? PreviousSector1 { get; init; }
+
+    public double? PreviousSector2 { get; init; }
+
+    public double? PreviousSector3 { get; init; }
+
     /// <summary>Cumulative sector times for the current lap, in seconds.</summary>
     public double? Sector1 { get; init; }
 
