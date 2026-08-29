@@ -343,11 +343,18 @@ This is the living implementation checklist for the GameTracker technical test. 
   a corrupt blob falls back to its preview), since comparing them would be misleading
 - `Sessions.razor` gained lap selection and an overlay toggle to drive the chart
 
-### ⏳ Step 34: Complete documentation
-- README with clean-checkout commands
-- CHOICES AND REASONS with trade-offs and justifications
-- TODO updates
-- Document known weak spots
+### ✅ Step 34: Complete documentation
+- README updated with clean-checkout commands, verified API routes, and project structure
+- Corrected the README's stale Part 5 claims: it still described raw `float32` + Brotli and
+  "~90,000 rows saved per lap"; both were replaced with the measured quantised-delta figures
+- Documented the Part 5 plotting decisions in CHOICES AND REASONS, including why a decimated
+  preview cannot use a real time axis
+- Added the quantisation loss (1.5e-5) and lap-progress overlay alignment as explicit known
+  weaknesses rather than leaving them implicit
+- TODO.md item 3 (two-lap overlay) marked implemented; remaining distance-alignment limitation
+  recorded instead
+- Removed the empty root `plan.md`, which duplicated `Docs/PLAN.md` in name only
+- Added a documentation map so the four docs' roles are unambiguous
 
 ---
 

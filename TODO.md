@@ -29,16 +29,19 @@ This file tracks work that was deliberately deferred during the initial implemen
 Sessions/stints/laps are uploaded via `POST /api/sessions` with exponential-backoff retry.
 
 ### 3. Two-Lap Overlay for Part 5
-**Status:** Not yet implemented  
-**Reason:** Part 5 capture and storage are in the plan (steps 32-33), but two-lap overlay rendering is time-intensive.
+**Status:** Implemented (step 33)
 
-**Implementation notes:**
-- Add lap selection checkboxes to the UI (max 2)
-- Load both `LapInputTelemetry` rows, decompress both blobs
-- Normalize time axis by lap distance (m) or elapsed percentage (0–100%)
-- Render both traces on the same `RadzenChart` with distinct colors
+Lap selection and an `Overlay` toggle live in `Sessions.razor`; `InputTraceChart.razor` renders
+both traces on one `RadzenChart`, reusing per-channel colours at lighter stroke weight for the
+comparison lap.
 
-**Estimated effort:** ~1 day
+**Remaining limitation:** the time axis is normalised by **elapsed percentage**, not by lap
+distance. Two laps of different durations therefore align proportionally, which is wrong if one
+lap contains an off-track excursion or a spin — the same percentage is no longer the same corner.
+Aligning on distance travelled requires capturing `LapDistance` per sample and resampling both
+traces onto a shared distance grid.
+
+**Estimated effort:** ~half a day
 
 ---
 
@@ -59,7 +62,7 @@ Sessions/stints/laps are uploaded via `POST /api/sessions` with exponential-back
 ---
 
 ### 5. Input Telemetry Blobs Are Opaque to SQL
-**Issue:** Part 5 stores telemetry as Brotli-compressed blobs. SQL cannot filter inside a blob (e.g., "laps where throttle exceeded 95% in sector 2").
+**Issue:** Part 5 stores telemetry as quantised, delta-encoded, Brotli-compressed blobs. SQL cannot filter inside a blob (e.g., "laps where throttle exceeded 95% in sector 2").
 
 **Impact:** Analytics queries require loading and decoding laps in application code.
 
@@ -97,6 +100,22 @@ Sessions/stints/laps are uploaded via `POST /api/sessions` with exponential-back
 - Log every field read with a try/catch to detect struct misalignment
 
 **Estimated effort:** ~half a day
+
+---
+
+### 7a. Input Quantisation Is Lossy
+**Issue:** Inputs are quantised to 16 bits before compression, so the stored trace is not
+bit-identical to what was captured. Measured maximum round-trip error is `1.53e-5`.
+
+**Impact:** None in practice — this is orders of magnitude below what a pedal or wheel can
+resolve, and below the noise floor of the game's own input reporting. It is recorded here only so
+the loss is a documented decision rather than a hidden surprise for anyone who later diffs
+captured against stored data.
+
+**If bit-exactness is ever required:** store the raw `float32` columns instead and accept ~4x the
+storage (measured: 48,126 bytes vs 11,990 bytes for a 90-second lap).
+
+**Estimated effort:** ~1 hour to make the format selectable per-lap
 
 ---
 

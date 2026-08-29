@@ -13,7 +13,7 @@ This project demonstrates:
 - **Real-time telemetry recording** from RaceRoom Racing Experience shared memory
 - **State machine design** for handling session/stint/lap lifecycle and edge cases
 - **Producer/consumer pipeline** with `Channel<T>` for high-frequency data capture
-- **Compressed input telemetry storage** using Brotli-compressed columnar blobs
+- **Compressed input telemetry storage** using quantised, delta-encoded, Brotli-compressed columnar blobs
 
 ---
 
@@ -104,10 +104,10 @@ GameTrackerSolution/
 ├── GameTrackerWpfClientApp/             # WPF app hosting Blazor via BlazorWebView
 ├── GameTrackerRazorLibrary/             # Shared Razor components
 ├── GameTrackerTestingConsoleApp/        # Throwaway spike console (used in step 2/6 of plan)
+├── TODO.md                              # Deferred work and known technical debt
 └── Docs/
 	├── PLAN.md                          # Living implementation checklist
-	├── CHOICES AND REASONS.md           # Architecture decisions and justifications
-	└── TODO.md                          # Deferred work
+	└── CHOICES AND REASONS.md           # Architecture decisions and justifications
 ```
 
 ---
@@ -161,13 +161,27 @@ Handles the four required scenarios:
 - **Quit to menu** — partial lap discarded, session closed with `reason: Abandoned`
 
 ### Part 5: Input Telemetry Storage
-- One row per lap, not one row per sample (~90,000 rows saved per lap)
+- One row per lap, not one row per sample (~5,400 rows saved per 90-second lap at 60 Hz)
 - Throttle/brake/steering buffered as `float[]` arrays during the lap
-- On completion, serialized **columnar**, Brotli-compressed to a single blob
-- A ~500-sample preview array (min/max decimated) stored alongside for fast plotting
+- On completion, each channel is **quantised to 16 bits, delta-encoded, then Brotli-compressed** into a single columnar blob
+- A ~500-sample-per-channel preview array (min/max decimated, uncompressed `float32`) is stored alongside for fast plotting
 - Trade-off: blobs are opaque to SQL (no WHERE clause filtering), but plotting is cheap (one primary-key fetch)
 
+**Measured, not assumed.** The original design stored raw `float32` columns and relied on Brotli
+alone. A verification probe disproved it: for a 90-second lap (64,800 bytes raw), `float32` +
+Brotli produced **48,126 bytes — only 25.7% saved**, because float mantissa noise is
+incompressible. Quantising to 16 bits and delta-encoding first produced **11,990 bytes (18.5% of
+raw)** with a maximum round-trip error of **1.53e-5**, far below the resolution of any pedal or
+wheel input. Columnar ordering alone is not enough; the data must be made compressible first.
+
 See `Docs/CHOICES AND REASONS.md` for full write/read/storage cost analysis.
+
+### Part 5: Input Telemetry Plotting
+- The chart binds the **preview by default**, so opening a lap costs one primary-key fetch and no decompression
+- Full resolution is **opt-in**: only then is the blob inflated and dequantised
+- Traces are decimated to ~1,200 plotted points, since an SVG chart cannot resolve more points than it has pixels
+- Previews are plotted against **lap-progress percentage**, not seconds. A preview is min/max decimated, so its samples are *not* evenly spaced in time; plotting it against a clock would place inputs at the wrong point in the lap
+- Two-lap overlay reuses the same per-channel colours at lighter stroke weight, so the channel stays identifiable and the lap is distinguished by weight
 
 ---
 
@@ -198,6 +212,9 @@ See `Docs/CHOICES AND REASONS.md` for full write/read/storage cost analysis.
 3. **Input telemetry blobs are opaque to SQL** — queries like "laps where throttle exceeded 95%" require application-code decoding
 4. **No server-side telemetry replay** — `GameTracker.Telemetry` targets `net10.0-windows`, so the server can't reference it (would need a split into pure + interop)
 5. **Version gate is strict** — if RaceRoom updates the struct, the app refuses to start rather than attempting a best-effort parse
+6. **Input quantisation is lossy** — inputs are stored to ~1.5e-5 precision. This is far below what a pedal or wheel can resolve, so it is invisible in practice, but the stored trace is not bit-identical to what was captured
+7. **Two-lap overlay aligns on lap progress, not distance** — laps of different durations are compared by percentage completed. If one lap includes an off-track excursion, the same percentage is not the same corner. Aligning on distance travelled would be more correct but is not implemented
+8. **Telemetry has only been validated against a single RaceRoom version** — the 3/5 layout was confirmed by a live spike on one machine; other builds are unverified
 
 These are deliberate trade-offs or stretch goals beyond the brief's scope. See `Docs/CHOICES AND REASONS.md` for details.
 
@@ -210,7 +227,9 @@ These are deliberate trade-offs or stretch goals beyond the brief's scope. See `
 3. Enter a **Practice** session (not menus — the `$R3E` shared memory region is only created in-session)
 4. Drive a few laps, make a pit stop, and quit to the menu
 5. Check the WPF client UI — your session, stints, and laps should appear in the "Recorded Sessions" view
-6. Check the server database — telemetry rows should appear in `TelemetryRecords` after the uploader runs
+6. Select a lap flagged `Inputs` — the driver-input trace renders from the stored preview
+7. Tick **Full resolution** to inflate the compressed blob, and use **Overlay** on a second lap to compare the two
+8. Check the server database — telemetry rows should appear in `TelemetryRecords` after the uploader runs
 
 ### Scenarios to Test
 - **Restart the session mid-run** — the app should open a new session, not corrupt the existing one
@@ -248,8 +267,8 @@ These are deliberate trade-offs or stretch goals beyond the brief's scope. See `
 
 ## License
 
-_[TO BE SPECIFIED]_
+Not specified — this is an assessment submission, not a distributed package.
 
 ---
 
-_Last updated: [TO BE FILLED AT END OF IMPLEMENTATION]_
+_All 34 planned implementation steps are complete. See `Docs/PLAN.md` for the step-by-step record and `TODO.md` for deferred work._

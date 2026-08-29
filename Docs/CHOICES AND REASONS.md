@@ -185,8 +185,8 @@ Made `Constant` class and nested enums (`VersionMajor`, `VersionMinor`, `Session
 
 | Axis | Analysis |
 |---|---|
-| **Write Cost** | One INSERT per lap instead of ~90,000 rows for a 90-second lap at 60 Hz × 3 channels. Eliminates SQLite write amplification and per-row index maintenance from the hot recording path. Compression runs on the consumer task, off the poll loop. |
-| **Read Cost** | One primary-key row fetch plus one Brotli decompress (~milliseconds for a few hundred KB) versus a 90,000-row scan and materialization. The preview makes the common-case chart render a **zero-decompress read**. Overlaying two laps is two fetches. |
+| **Write Cost** | One INSERT per lap instead of ~16,200 rows for a 90-second lap at 60 Hz (5,400 samples × 3 channels). Eliminates SQLite write amplification and per-row index maintenance from the hot recording path. Compression runs on the consumer task, off the poll loop. |
+| **Read Cost** | One primary-key row fetch plus one Brotli decompress (~milliseconds for a ~12 KB blob) versus a ~16,200-row scan and materialization. The preview makes the common-case chart render a **zero-decompress read**. Overlaying two laps is two fetches. |
 | **Storage** | Measured on a synthetic 90-second lap at 60 Hz (5,400 samples/channel, 64,800 bytes raw): naive columnar **float32 + Brotli compressed to only 48,126 bytes (74% of raw)**. Quantised 16-bit deltas + Brotli reach **11,990 bytes (18.5%)** — a 4× improvement. Row-per-sample would add rowid + FK + timestamp per row, roughly tripling the raw figure before indexes. |
 
 **Correction — the original "tens of KB from columnar layout alone" estimate was wrong, and measurement disproved it.**
@@ -204,6 +204,61 @@ Interleaved: `[throttle0, brake0, steer0, throttle1, brake1, steer1, ...]` — v
 Columnar: `[throttle0, throttle1, ..., brake0, brake1, ..., steer0, steer1, ...]` — same-channel values adjacent.
 
 Pedal inputs are highly autocorrelated (smooth changes, not random noise). Columnar layout lets the compressor exploit intra-channel patterns far better than interleaved, and it is what makes the per-channel delta encoding meaningful in the first place — a delta between a throttle and a brake sample would be noise. Note that columnar ordering alone was measured as insufficient; see the storage row above.
+
+---
+
+## Part 5: Input Telemetry Plotting
+
+### Decision: Preview-First Rendering with Opt-In Full Resolution
+
+**Choice:** `InputTraceChart.razor` binds the stored preview by default. The compressed blob is
+inflated only when the user explicitly ticks "Full resolution".
+
+**Rationale:** The storage format was designed so the common case costs no decompression. Having
+the chart eagerly inflate every blob would have thrown that away — the preview would exist but
+never be used. Making full resolution opt-in keeps the default path a single primary-key fetch,
+and the UI states the cost so the choice is visible rather than hidden.
+
+### Decision: Previews Plot Against Lap Progress, Full Traces Against Time
+
+This is the subtle one, and getting it wrong would have produced a chart that looked correct but
+lied.
+
+A preview is **min/max decimated**: each bucket contributes its minimum and maximum, in that
+order. Those two values come from different moments within the bucket, and buckets do not
+represent equal time spans once a lap's sample count doesn't divide evenly. The preview is
+therefore **not uniformly spaced in time**. Multiplying an index by a sample period — which is
+what plotting against seconds means — would place inputs at moments they did not occur, and the
+error would grow across the lap.
+
+Previews are consequently plotted against **percentage of lap progress**, which is the only claim
+the decimated data actually supports. Full traces retain their real capture rate and are plotted
+against elapsed seconds. `InputTraceSeries.IsTimeAxis` carries this distinction so the axis title
+never misdescribes the data.
+
+A consequence worth noting: because `GetInputTraceAsync` silently falls back to the preview when
+a blob is corrupt, two laps requested at full resolution can still land on **different** axes. The
+chart detects that mismatch and warns rather than overlaying them, since comparing a
+time-based trace against a progress-based one is meaningless.
+
+### Decision: Decimate to ~1,200 Plotted Points
+
+An SVG chart a few hundred pixels wide cannot resolve more points than it has pixels, so plotting
+5,400+ samples per channel costs DOM nodes and layout time for detail no one can see. Striding to
+a ~1,200-point ceiling keeps the full-resolution view responsive. The trade-off is that the
+rendered full-resolution trace is itself decimated — it is higher fidelity than the preview, but
+it is not every sample.
+
+### Decision: Overlay Distinguishes Laps by Weight, Not Hue
+
+The comparison lap reuses the same per-channel colours (throttle green, brake red, steering blue)
+at reduced stroke weight, rather than introducing three new colours. Six distinct hues would force
+the reader to learn a legend; keeping hue bound to *channel* and weight to *lap* means the trace
+stays readable at a glance.
+
+**Known limitation:** the overlay aligns on elapsed percentage, not distance travelled. If one lap
+contains an off-track excursion, the same percentage is no longer the same corner. Distance-based
+alignment is recorded in TODO.md.
 
 ---
 
@@ -276,6 +331,20 @@ Pedal inputs are highly autocorrelated (smooth changes, not random noise). Colum
 | State machine (pure) | Testable, centralized logic | Adds TelemetryFrame mapping layer |
 | Single audit table (JSON) | Simple queries, flexible schema | Less type-safe than per-entity tables |
 | Columnar blob telemetry | Massive compression, cheap writes | Opaque to SQL, no WHERE clause queries |
+| 16-bit quantised deltas | 4x smaller than float32+Brotli (measured) | Lossy at 1.5e-5; not bit-identical to capture |
+| Preview-first chart binding | Default render needs no decompression | Preview cannot use a true time axis |
+| Overlay aligned on lap % | Works without distance capture | Wrong corner alignment if a lap is abnormal |
+
+---
+
+## Documentation Map
+
+| Document | Purpose |
+|---|---|
+| `README.md` | Clean-checkout setup, run commands, API surface, known weaknesses |
+| `Docs/PLAN.md` | Step-by-step implementation record (all 34 steps) |
+| `Docs/CHOICES AND REASONS.md` | This file — decisions, measurements, and trade-offs |
+| `TODO.md` | Deferred work, technical debt, and future enhancements |
 
 ---
 
