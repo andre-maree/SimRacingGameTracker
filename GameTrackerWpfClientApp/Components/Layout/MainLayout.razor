@@ -45,7 +45,9 @@
             {
                 Severity = result.Succeeded ? NotificationSeverity.Success : NotificationSeverity.Warning,
                 Summary = result.Succeeded ? "Catalogue synced" : "Sync incomplete",
-                Detail = result.Succeeded ? $"{result.RowsApplied} row(s) updated." : result.Message,
+                Detail = result.Succeeded
+                    ? $"{result.RowsApplied} row(s) updated."
+                    : result.Message ?? "The sync did not complete. See the log for details.",
                 Duration = 4000
             });
         }

@@ -45,21 +45,46 @@ cd GameTrackerSolution
 dotnet restore
 ```
 
-### 3. Set up the server database
+### 3. Set the admin password (required)
+
+No credential is committed to this repository, and the seeder **will not invent a default**. If
+you skip this step the catalogue still seeds, but no admin account is created and you will not be
+able to log in.
+
+Set this **before first running the server**, since seeding happens at application startup.
+
+```powershell
+cd GameTrackerBlazorServerApp
+dotnet user-secrets set "Seed:AdminPassword" "Your-Strong-Password-1!"
+cd ..
+```
+
+The password must satisfy the ASP.NET Core Identity default policy (8+ characters, upper, lower,
+digit, and non-alphanumeric). The admin email defaults to `admin@gametracker.local` and can be
+overridden with `Seed:AdminEmail`.
+
+### 4. Set up the server database
+
+No manual migration step is required. The server calls `DbSeeder.SeedAsync` at startup, which
+migrates the database and then seeds it. Simply running the server (step 6) will:
+
+- Create the SQL Server database (connection string in `appsettings.json`)
+- Run migrations (schema + audit triggers)
+- Seed the catalogue from `Data/r3e-data.json`
+- Create `Admin` and `User` roles
+- Create the admin account using the password you set in step 3
+
+If you prefer to apply migrations ahead of time, you can still run:
+
 ```powershell
 cd GameTrackerBlazorServerApp
 dotnet ef database update
 cd ..
 ```
 
-This will:
-- Create the SQL Server database (connection string in `appsettings.json`)
-- Run migrations (schema + audit triggers)
-- Seed the catalogue from `Data/r3e-data.json`
-- Create `Admin` and `User` roles
-- Create a default admin account (see seeder for credentials)
+Note that this applies **schema only** — seeding happens at application startup, not here.
 
-### 4. Set up the client database
+### 5. Set up the client database
 The WPF client database is created automatically on first launch under:
 ```
 %LOCALAPPDATA%\GameTracker\gametracker.db
@@ -67,15 +92,21 @@ The WPF client database is created automatically on first launch under:
 
 No manual migration step is required.
 
-### 5. Run the Blazor Server app
+### 6. Run the Blazor Server app
 ```powershell
 cd GameTrackerBlazorServerApp
 dotnet run
 ```
 
-The app will start on `https://localhost:5001` (or as configured). Navigate there and log in with the seeded admin account.
+The app will start on `https://localhost:7157` (HTTP fallback: `http://localhost:5092`) as
+configured in `Properties/launchSettings.json`. Navigate there and log in with the admin account
+from step 3.
 
-### 6. Run the WPF Client app
+> The WPF client targets `https://localhost:7157/` via `Server:BaseAddress` in
+> `GameTrackerWpfClientApp/appsettings.json`. If you change the server's port, change that value
+> too or the client will fail to sync.
+
+### 7. Run the WPF Client app
 ```powershell
 cd GameTrackerWpfClientApp
 dotnet run
@@ -86,7 +117,7 @@ On first launch:
 2. The client will sync the catalogue (Games/Cars/Tracks) into local SQLite
 3. The client is now usable offline
 
-### 7. Record telemetry (optional)
+### 8. Record telemetry (optional)
 1. Launch RaceRoom Racing Experience
 2. Enter a practice session with any car/track
 3. Leave the WPF client running in the background
@@ -117,7 +148,9 @@ GameTrackerSolution/
 - **Admin** — full CRUD on Games, Cars, Tracks
 - **User** — read-only access to catalogue
 
-The seeder creates a default admin account. See `ApplicationDbContextSeeder.cs` for credentials.
+The seeder creates an admin account **only if** `Seed:AdminPassword` is configured (see step 3 of
+the setup instructions). No credentials are committed to this repository, and `DbSeeder.cs`
+deliberately skips creation rather than falling back to a guessable default.
 
 ---
 
@@ -252,7 +285,7 @@ These are deliberate trade-offs or stretch goals beyond the brief's scope. See `
 
 ### The client won't sync
 - Check the JWT token in `%LOCALAPPDATA%\GameTracker\token.dat` — it may have expired (24-hour TTL)
-- Check the server API is reachable (default: `https://localhost:5001`)
+- Check the server API is reachable (default: `https://localhost:7157`)
 - Check the server logs for authentication failures
 
 ---
@@ -267,7 +300,7 @@ These are deliberate trade-offs or stretch goals beyond the brief's scope. See `
 
 ## License
 
-Not specified — this is an assessment submission, not a distributed package.
+MIT — see `LICENSE.txt`.
 
 ---
 

@@ -42,7 +42,7 @@
     {
         var saved = await Dialogs.OpenAsync<TrackEditor>(
             track.Id == 0 ? "Add track" : "Edit track",
-            new Dictionary<string, object> { { nameof(TrackEditor.Track), Clone(track) } });
+            new Dictionary<string, object?> { { nameof(TrackEditor.Track), Clone(track) } });
 
         if (saved is true && _grid is not null)
         {

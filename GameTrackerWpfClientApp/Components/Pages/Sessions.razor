@@ -298,7 +298,7 @@
     {
         // Row-level styling as well as the badge: an invalid lap must be obvious when
         // scanning a column of times, not only when reading the flags cell.
-        if (!args.Data.IsValid)
+        if (args.Data is { IsValid: false })
         {
             args.Attributes.Add("style", "opacity: 0.65;");
         }

@@ -44,7 +44,7 @@
     {
         var saved = await Dialogs.OpenAsync<CarEditor>(
             car.Id == 0 ? "Add car" : "Edit car",
-            new Dictionary<string, object> { { nameof(CarEditor.Car), Clone(car) } });
+            new Dictionary<string, object?> { { nameof(CarEditor.Car), Clone(car) } });
 
         if (saved is true && _grid is not null)
         {
