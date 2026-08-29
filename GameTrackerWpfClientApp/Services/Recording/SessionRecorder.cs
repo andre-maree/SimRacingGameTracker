@@ -190,6 +190,13 @@ public sealed class SessionRecorder : BackgroundService
     {
         try
         {
+            // Scoped to the session so every write, and any failure, is attributable to a
+            // specific outing when read back from the flat log file.
+            using var scope = _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SessionId"] = _stateMachine.CurrentSessionId ?? Guid.Empty
+            });
+
             await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
             await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 

@@ -297,9 +297,24 @@ This is the living implementation checklist for the GameTracker technical test. 
 - Missing catalogue rows fall back to `Car #id` / `Track #id`: the session is still valid data, and the id beats an empty cell
 - Times are converted to local for display while remaining UTC in storage
 
-### ⏳ Step 31: Add structured logging
-- Scopes in both hosts
-- File sink for desktop client
+### ✅ Step 31: Add structured logging
+- `GameTrackerBlazorServerApp/Middleware/RequestLoggingScopeMiddleware.cs` wraps every request in a scope carrying `RequestId`, `RequestPath` and `UserId`
+- Registered as **middleware, not per controller**, so it covers endpoints added later and cannot be forgotten — and placed **after** `UseAuthentication`, since the user claim does not exist on the principal before that
+- The server serves concurrent clients, so lines from different requests interleave; without a correlation key a failed batch cannot be reconstructed from the noise, and "which user" is the first question asked when a client reports missing laps
+- `TraceIdentifier` is reused as the key rather than a new GUID, because ASP.NET Core already surfaces it in error responses — linking a user-visible failure straight to the log
+- Logs the **user id, never the email**: log files are copied around far more casually than the database
+- Timing is scoped to `/api` only; Blazor static assets and circuit polling would otherwise bury the lines that matter. Level is 5xx→Error, 4xx→Warning, else Information, so a level filter alone does the triage
+- `GameTrackerWpfClientApp/Services/Logging/FileLoggerProvider.cs` — a rolling file sink under `%LOCALAPPDATA%/GameTracker/logs`, beside the database
+- A file sink is **mandatory** for the desktop app specifically: it has no console, so a crash or stalled upload on a user's machine otherwise leaves no evidence whatsoever
+- Hand-rolled rather than adding Serilog — the requirement is one rolling text file, and a logging framework plus sink packages is a large dependency for that
+- Rolls **daily by date-stamped filename**, which needs no rename or lock, with 14-day retention swept on startup (best-effort: a locked old file must not block startup)
+- Writes on a dedicated `IsBackground` thread at `BelowNormal` priority — a pool thread parked for the process lifetime starves everything else, and diagnostics must never compete with the 60 Hz poll loop
+- Queue is **bounded at 2048 with `TryAdd`**: a stalled disk must not exhaust memory or block the recording consumer task, and dropping diagnostics beats taking down the app producing them
+- The write loop swallows exceptions by design — a throwing logger turns a disk problem into an application failure, with nowhere left to report it
+- `ISupportExternalScope` is implemented so scopes render into the file; without them the flat log cannot tie a lap-upload failure back to its session
+- Scopes added at both hot spots: `SessionId` around recorder persistence, and a per-batch `UploadBatchId` in the uploader, since a partially-successful upload spans several lines
+- Global handlers for `AppDomain.UnhandledException`, `DispatcherUnhandledException` and `TaskScheduler.UnobservedTaskException`, attached only once the logger exists; the unobserved-task case is the failure that otherwise goes completely unnoticed in a background worker
+- EF Core command logging pinned to Warning in both hosts: at Information it logs every SQL statement, which would drown a per-lap write path
 
 ### ⏳ Step 32: Implement Part 5 capture and storage
 - Accumulate per-lap float[] buffers

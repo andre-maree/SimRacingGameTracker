@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using GameTrackerWpfClientApp.Data;
 using GameTracker.Telemetry.Abstractions;
@@ -8,6 +10,7 @@ using GameTrackerRazorLibrary.Catalogue;
 using GameTrackerWpfClientApp.Services;
 using GameTrackerWpfClientApp.Services.Authentication;
 using GameTrackerWpfClientApp.Services.Catalogue;
+using GameTrackerWpfClientApp.Services.Logging;
 using GameTrackerWpfClientApp.Services.Recording;
 using GameTrackerWpfClientApp.Services.Sync;
 using GameTrackerWpfClientApp.Services.Upload;
@@ -51,10 +54,40 @@ namespace GameTrackerWpfClientApp
 #if DEBUG
             builder.Services.AddBlazorWebViewDeveloperTools();
 #endif
+
+            // Logs live beside the database, under %LOCALAPPDATA%: a user can be asked for
+            // one file from one folder, and Program Files is not writable anyway.
+            builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(LocalDataPath, "logs")));
+
+            // Scopes are off by default on most providers; without them a lap-upload
+            // failure in a flat file cannot be tied back to the session it came from.
+            builder.Logging.Configure(options =>
+                options.ActivityTrackingOptions = ActivityTrackingOptions.SpanId | ActivityTrackingOptions.TraceId);
+
             ConfigureServices(builder.Services, builder.Configuration);
 
             _host = builder.Build();
             ServiceProvider = _host.Services;
+
+            var logger = _host.Services.GetRequiredService<ILogger<App>>();
+
+            // Attached only once the logger exists, so a crash has somewhere to be written.
+            // WPF otherwise terminates a background-thread fault with no record at all.
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+                logger.LogCritical(args.ExceptionObject as Exception, "Unhandled exception; the application is terminating.");
+
+            DispatcherUnhandledException += (_, args) =>
+                logger.LogError(args.Exception, "Unhandled dispatcher exception.");
+
+            TaskScheduler.UnobservedTaskException += (_, args) =>
+            {
+                // Observed and logged rather than left to the finalizer: an unobserved
+                // fault in a background worker is exactly the failure that goes unnoticed.
+                logger.LogError(args.Exception, "Unobserved task exception.");
+                args.SetObserved();
+            };
+
+            logger.LogInformation("GameTracker desktop client starting. Data path: {LocalDataPath}", LocalDataPath);
 
             // Bring the local store up to date before any component can query it.
             using (var scope = _host.Services.CreateScope())

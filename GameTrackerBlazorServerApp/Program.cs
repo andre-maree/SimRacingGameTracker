@@ -1,6 +1,7 @@
 using GameTrackerBlazorServerApp.Components;
 using GameTrackerBlazorServerApp.Components.Account;
 using GameTrackerBlazorServerApp.Data;
+using GameTrackerBlazorServerApp.Middleware;
 using GameTrackerBlazorServerApp.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -139,6 +140,10 @@ app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// After authentication on purpose: the scope stamps the user id, which does not exist on
+// the principal until the authentication middleware has run.
+app.UseMiddleware<RequestLoggingScopeMiddleware>();
 
 app.UseAntiforgery();
 

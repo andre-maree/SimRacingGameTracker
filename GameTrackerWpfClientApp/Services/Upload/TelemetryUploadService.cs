@@ -133,6 +133,13 @@ public sealed class TelemetryUploadService : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<ClientDbContext>();
 
+            // A correlation id per batch: an upload that partially succeeds spans several
+            // log lines, and without a shared key they cannot be tied together after the fact.
+            using var logScope = _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["UploadBatchId"] = Guid.NewGuid()
+            });
+
             // Oldest first, so a long backlog is published in the order it was driven.
             var pending = await context.LocalTelemetry
                 .Where(r => r.UploadedAtUtc == null)
