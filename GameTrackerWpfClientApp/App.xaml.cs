@@ -8,6 +8,7 @@ using GameTrackerRazorLibrary.Catalogue;
 using GameTrackerWpfClientApp.Services;
 using GameTrackerWpfClientApp.Services.Authentication;
 using GameTrackerWpfClientApp.Services.Catalogue;
+using GameTrackerWpfClientApp.Services.Recording;
 using GameTrackerWpfClientApp.Services.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -140,6 +141,11 @@ namespace GameTrackerWpfClientApp
             // instance would open a redundant view of the same region.
             services.AddSingleton<SharedMemoryTelemetrySource>();
             services.AddSingleton<ITelemetrySource>(sp => sp.GetRequiredService<SharedMemoryTelemetrySource>());
+
+            // Registered as a singleton *and* as the hosted service instance, so the UI
+            // can subscribe to StatusChanged on the very same object the host is running.
+            services.AddSingleton<SessionRecorder>();
+            services.AddHostedService(sp => sp.GetRequiredService<SessionRecorder>());
 
             // Radzen dialog/notification/tooltip/context-menu services: the desktop
             // equivalent of AddRadzenComponents() on the server.

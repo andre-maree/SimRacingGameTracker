@@ -251,11 +251,22 @@ This is the living implementation checklist for the GameTracker technical test. 
 - `_lastCompletedLaps` is anchored to the game's own counter on session start, so joining a session already in progress does not replay laps that were already driven
 - `Process` returns a list because one frame can legitimately produce several events — a restart closes a lap, a stint and a session, then opens new ones
 
-### ⏳ Step 28: Implement SessionRecorder pipeline
-- Bounded Channel<TelemetryFrame>
-- Consumer task feeds state machine
-- Persist to SQLite
-- Throttled UI notification
+### ✅ Step 28: Implement SessionRecorder pipeline
+- `GameTrackerWpfClientApp/Services/Recording/SessionRecorder.cs` — a `BackgroundService` splitting the poll loop from persistence with a **bounded** `Channel<TelemetryFrame>`
+- The split exists because SQLite writes and Brotli compression are slow *and jittery*: on the poll loop a single blocking write skips the frame a lap rolls over on, which is exactly the frame that matters and is unrecoverable
+- Capacity **600** (~10s at 60 Hz) with `FullMode = DropOldest`: unbounded would turn a stalled disk into unbounded memory growth over a long stint, and dropping a stale sample costs a gap in an input trace while blocking the producer costs a whole lap
+- `SingleReader`/`SingleWriter` are set because both are true, letting the channel take its cheaper fast path
+- Persistence uses a **short-lived context per event batch** from `IDbContextFactory`: the recorder outlives every session, so one long-lived change tracker would accumulate every lap in memory
+- The transaction is scoped to **one frame's events**, matching the state machine's own atomic unit — a restart therefore cannot commit the new session without also closing the old one
+- The `Lap`, its `LapInputTelemetry` blob and the queued `TelemetryRecord` are written in the **same transaction**: writing the upload row separately would let a crash between the two leave a lap that is never uploaded and has nothing indicating it is missing
+- Write failures are logged and swallowed, never fatal — the driver is still on track, and abandoning the stream would lose every *remaining* lap as well as the failed one
+- Producer completion drains the channel, then `Disconnect()` is called with `CancellationToken.None` so the closing write survives shutdown, when the stopping token is already cancelled
+- Input samples are buffered only while a stint is genuinely open, so menu and garage frames cannot leak into a trace; `PartialLapDiscarded` clears the buffer and writes nothing
+- UI notification is throttled to **500ms**, since the frame stream would otherwise re-render the same status 60 times a second — with a deliberate bypass on lap completion, the one event the user is actually waiting for
+- `GameTracker.Telemetry/Recording/LapInputTraceBuffer.cs` implements the Part 5 encoding: **columnar** float32 (all throttle, then brake, then steering) → Brotli, plus an uncompressed **min/max decimated** ~500-sample preview
+- Columnar rather than interleaved because pedal traces are smooth and autocorrelated; keeping like values adjacent is what lets Brotli reach tens of KB
+- Min/max per bucket rather than every-Nth sampling, because plain sampling drops the brief full-throttle and full-brake spikes that are the entire point of the trace
+- Little-endian written explicitly rather than via `BitConverter`, so a blob written on the desktop and read on the server does not depend on the architecture that touched it
 
 ### ⏳ Step 29: Implement background uploader
 - Drain LocalTelemetry and sessions
