@@ -1,0 +1,255 @@
+@page "/sessions"
+@using GameTracker.Domain.Enums
+@using GameTrackerWpfClientApp.Services.Recording
+@implements IDisposable
+@inject RecordedSessionReader Reader
+@inject SessionRecorder Recorder
+
+<PageTitle>Sessions</PageTitle>
+
+<RadzenStack Gap="1rem" class="rz-p-4">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="1rem">
+        <RadzenText TextStyle="TextStyle.H4" class="rz-my-0">Recorded sessions</RadzenText>
+
+        @* Live recorder state, driven by the recorder's own throttled event rather than a
+           timer: a poll would either lag behind a completed lap or spin needlessly. *@
+        <RadzenBadge Text="@RecordingText" BadgeStyle="@RecordingStyle" />
+
+        <RadzenButton Icon="refresh" Text="Refresh" Size="ButtonSize.Small"
+                      Variant="Variant.Flat" IsBusy="@_loading" Click="@LoadAsync"
+                      class="rz-ml-auto" />
+    </RadzenStack>
+
+    @if (_lastLap is not null)
+    {
+        <RadzenText TextStyle="TextStyle.Body2">@_lastLap</RadzenText>
+    }
+
+    @* Master grid. Single selection drives the detail grid below; a split view keeps both
+       visible, which is how a driver compares a session summary against its laps. *@
+    <RadzenDataGrid @ref="_sessionGrid" Data="@_sessions" TItem="RecordedSessionRow"
+                    AllowSorting="true" AllowFiltering="false" AllowPaging="true" PageSize="10"
+                    SelectionMode="DataGridSelectionMode.Single" Value="@_selected"
+                    RowSelect="@OnSessionSelected" IsLoading="@_loading"
+                    EmptyText="No sessions recorded yet. Start a session in RaceRoom to begin.">
+        <Columns>
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Property="StartedAtLocal" Title="Started"
+                                  FormatString="{0:g}" Width="160px" />
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Property="SessionType" Title="Type" Width="110px" />
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Property="TrackName" Title="Track" />
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Property="CarName" Title="Car" />
+
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Title="Laps" Width="100px" Sortable="false">
+                <Template Context="session">
+                    @* Valid count shown against the total, since the difference is the
+                       first thing a driver wants to know about a session. *@
+                    @session.ValidLapCount / @session.LapCount
+                </Template>
+            </RadzenDataGridColumn>
+
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Property="BestLapTime" Title="Best" Width="110px">
+                <Template Context="session">
+                    @RecordedSessionReader.FormatTime(session.BestLapTime)
+                </Template>
+            </RadzenDataGridColumn>
+
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Title="Status" Width="150px" Sortable="false">
+                <Template Context="session">
+                    @if (session.EndedAtLocal is null)
+                    {
+                        <RadzenBadge Text="Recording" BadgeStyle="BadgeStyle.Info" />
+                    }
+                    else
+                    {
+                        <RadzenBadge Text="@session.EndReason.ToString()"
+                                     BadgeStyle="@EndReasonStyle(session.EndReason)" />
+                    }
+                </Template>
+            </RadzenDataGridColumn>
+
+            <RadzenDataGridColumn TItem="RecordedSessionRow" Title="Upload" Width="110px" Sortable="false">
+                <Template Context="session">
+                    @* Surfaced per session so an offline backlog is visible rather than
+                       silently accumulating. *@
+                    @if (session.PendingUploadCount > 0)
+                    {
+                        <RadzenBadge Text="@($"{session.PendingUploadCount} queued")"
+                                     BadgeStyle="BadgeStyle.Warning" />
+                    }
+                    else
+                    {
+                        <RadzenBadge Text="Uploaded" BadgeStyle="BadgeStyle.Light" />
+                    }
+                </Template>
+            </RadzenDataGridColumn>
+        </Columns>
+    </RadzenDataGrid>
+
+    @if (_selected.Count > 0)
+    {
+        <RadzenText TextStyle="TextStyle.H6" class="rz-mt-4 rz-mb-0">Laps</RadzenText>
+
+        <RadzenDataGrid Data="@_laps" TItem="RecordedLapRow" AllowSorting="true"
+                        AllowPaging="true" PageSize="20" IsLoading="@_loadingLaps"
+                        RowRender="@OnLapRender"
+                        EmptyText="No completed laps in this session.">
+            <Columns>
+                <RadzenDataGridColumn TItem="RecordedLapRow" Property="StintNumber" Title="Stint" Width="80px" />
+                <RadzenDataGridColumn TItem="RecordedLapRow" Property="LapNumber" Title="Lap" Width="80px" />
+
+                <RadzenDataGridColumn TItem="RecordedLapRow" Property="LapTime" Title="Lap time" Width="120px">
+                    <Template Context="lap">
+                        @* Null times render as an em dash, never 0:00.000: a missing time
+                           and a zero time mean very different things. *@
+                        @RecordedSessionReader.FormatTime(lap.LapTime)
+                    </Template>
+                </RadzenDataGridColumn>
+
+                <RadzenDataGridColumn TItem="RecordedLapRow" Property="Sector1" Title="S1" Width="110px" Sortable="false">
+                    <Template Context="lap">@RecordedSessionReader.FormatTime(lap.Sector1)</Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="RecordedLapRow" Property="Sector2" Title="S2" Width="110px" Sortable="false">
+                    <Template Context="lap">@RecordedSessionReader.FormatTime(lap.Sector2)</Template>
+                </RadzenDataGridColumn>
+                <RadzenDataGridColumn TItem="RecordedLapRow" Property="Sector3" Title="S3" Width="110px" Sortable="false">
+                    <Template Context="lap">@RecordedSessionReader.FormatTime(lap.Sector3)</Template>
+                </RadzenDataGridColumn>
+
+                <RadzenDataGridColumn TItem="RecordedLapRow" Title="Flags" Sortable="false">
+                    <Template Context="lap">
+                        <RadzenStack Orientation="Orientation.Horizontal" Gap="0.25rem">
+                            @if (!lap.IsValid)
+                            {
+                                <RadzenBadge Text="Invalid" BadgeStyle="BadgeStyle.Danger" />
+                            }
+                            @if (lap.IsPitLap)
+                            {
+                                @* Pit laps are marked so an in/out lap is never mistaken
+                                   for a slow flying lap. *@
+                                <RadzenBadge Text="Pit" BadgeStyle="BadgeStyle.Secondary" />
+                            }
+                            @if (lap.HasInputTrace)
+                            {
+                                <RadzenBadge Text="Inputs" BadgeStyle="BadgeStyle.Light" />
+                            }
+                            @if (!lap.IsUploaded)
+                            {
+                                <RadzenBadge Text="Queued" BadgeStyle="BadgeStyle.Warning" />
+                            }
+                        </RadzenStack>
+                    </Template>
+                </RadzenDataGridColumn>
+            </Columns>
+        </RadzenDataGrid>
+    }
+</RadzenStack>
+
+@code {
+    private RadzenDataGrid<RecordedSessionRow>? _sessionGrid;
+    private IReadOnlyList<RecordedSessionRow> _sessions = [];
+    private IReadOnlyList<RecordedLapRow> _laps = [];
+
+    // Radzen single selection still binds a list, so the selected session is held as a
+    // one-element collection rather than a scalar.
+    private IList<RecordedSessionRow> _selected = [];
+
+    private bool _loading;
+    private bool _loadingLaps;
+    private string? _lastLap;
+    private RecordingStatus? _status;
+
+    private string RecordingText => _status switch
+    {
+        { IsRecording: true } => "Recording",
+        { IsConnected: true } => "Game connected",
+        _ => "Game not running"
+    };
+
+    private BadgeStyle RecordingStyle => _status switch
+    {
+        { IsRecording: true } => BadgeStyle.Success,
+        { IsConnected: true } => BadgeStyle.Info,
+        _ => BadgeStyle.Light
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = Recorder.CurrentStatus;
+        Recorder.StatusChanged += OnStatusChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        try
+        {
+            _sessions = await Reader.GetSessionsAsync();
+
+            // The selected row is a fresh instance after a reload, so selection is
+            // re-established by id rather than by reference or it would silently clear.
+            if (_selected.Count > 0)
+            {
+                var selectedId = _selected[0].Id;
+                var match = _sessions.FirstOrDefault(s => s.Id == selectedId);
+                _selected = match is null ? [] : [match];
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnSessionSelected(RecordedSessionRow session)
+    {
+        _selected = [session];
+        _loadingLaps = true;
+
+        try
+        {
+            _laps = await Reader.GetLapsAsync(session.Id);
+        }
+        finally
+        {
+            _loadingLaps = false;
+        }
+    }
+
+    private void OnLapRender(RowRenderEventArgs<RecordedLapRow> args)
+    {
+        // Row-level styling as well as the badge: an invalid lap must be obvious when
+        // scanning a column of times, not only when reading the flags cell.
+        if (!args.Data.IsValid)
+        {
+            args.Attributes.Add("style", "opacity: 0.65;");
+        }
+    }
+
+    private void OnStatusChanged(RecordingStatus status)
+    {
+        _status = status;
+        _lastLap = status.LastLapDescription;
+
+        // The event arrives on the recorder's consumer task, so the render must be
+        // marshalled back onto the UI's synchronisation context.
+        InvokeAsync(StateHasChanged);
+    }
+
+    private static BadgeStyle EndReasonStyle(SessionEndReason? reason) => reason switch
+    {
+        SessionEndReason.Completed => BadgeStyle.Success,
+        SessionEndReason.Restart => BadgeStyle.Info,
+        SessionEndReason.Abandoned => BadgeStyle.Warning,
+        _ => BadgeStyle.Light
+    };
+
+    public void Dispose()
+    {
+        // The recorder outlives every page, so an un-removed handler would keep this
+        // component alive for the lifetime of the app and render into a dead context.
+        Recorder.StatusChanged -= OnStatusChanged;
+    }
+}

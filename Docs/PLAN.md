@@ -282,10 +282,20 @@ This is the living implementation checklist for the GameTracker technical test. 
 - The loop swallows all exceptions by design — it is the only thing that ever clears the local queue, so letting it die would silently strand every lap recorded from that point on
 - Batches of **500** to match the server limit, oldest first so a backlog publishes in the order it was driven; a short batch ends the drain
 
-### ⏳ Step 30: Build recorded-sessions desktop UI
-- Radzen master/detail
-- Invalid laps flagged
-- Null lap times as "—"
+### ✅ Step 30: Build recorded-sessions desktop UI
+- `GameTrackerWpfClientApp/Components/Pages/Sessions.razor` — Radzen master/detail: a sessions grid with single selection driving a lap grid below, both visible at once so a summary can be read against its laps
+- `GameTrackerWpfClientApp/Services/Recording/RecordedSessionReader.cs` projects flat rows rather than handing entities to the grid, because car and track *names* live in the catalogue mirror and are joined on external id, not navigation properties — doing it once here avoids a per-row lookup during render
+- Lap counts and best lap are aggregated **in SQL**: an endurance session holds hundreds of laps the summary row would otherwise materialise just to count
+- Best lap considers **valid laps only** — an invalid lap is not a lap time
+- `HasInputTrace` is an existence check, never a blob load, so opening a session does not pull megabytes of compressed input traces
+- Null lap and sector times render as **"—"**, never `0:00.000`: a missing time and a zero time mean very different things, and a zero would read as a real (absurd) result
+- Invalid laps are flagged **twice** — a Danger badge and a dimmed row — because a badge alone is easy to miss when scanning a column of times. Pit laps carry their own badge so an in/out lap is never mistaken for a slow flying lap
+- Per-session and per-lap **upload badges** surface the offline backlog rather than letting it accumulate silently
+- Live recorder status comes from `SessionRecorder.StatusChanged` rather than a timer: a poll would either lag a completed lap or spin for nothing. The handler marshals through `InvokeAsync` since it fires on the recorder's consumer task
+- `IDisposable` unsubscribes — the recorder outlives every page, so a leaked handler would pin the component and render into a dead context
+- Selection is re-established **by id** after a refresh, since reloading produces fresh row instances and reference-based selection would silently clear
+- Missing catalogue rows fall back to `Car #id` / `Track #id`: the session is still valid data, and the id beats an empty cell
+- Times are converted to local for display while remaining UTC in storage
 
 ### ⏳ Step 31: Add structured logging
 - Scopes in both hosts

@@ -109,6 +109,10 @@ namespace GameTrackerWpfClientApp
             // mirror, so browsing works with no connectivity at all.
             services.AddScoped<ICatalogueReader, LocalCatalogueReader>();
 
+            // Scoped alongside the catalogue reader: it opens a short-lived context per
+            // query from the singleton factory, so it holds no state of its own.
+            services.AddScoped<RecordedSessionReader>();
+
             // The protected token file sits beside the database, in the same per-user location.
             services.AddSingleton<ITokenStore>(sp => new DpapiTokenStore(
                 LocalDataPath,
