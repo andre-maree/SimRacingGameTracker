@@ -1,0 +1,10 @@
+@page "/catalogue/tracks"
+@using GameTrackerRazorLibrary.Catalogue
+
+<PageTitle>Tracks</PageTitle>
+
+<RadzenStack Gap="1rem" class="rz-p-4">
+    <RadzenText TextStyle="TextStyle.H4">Tracks</RadzenText>
+
+    <TrackCatalogueGrid EmptyText="No tracks available. Sync the catalogue to download them." />
+</RadzenStack>

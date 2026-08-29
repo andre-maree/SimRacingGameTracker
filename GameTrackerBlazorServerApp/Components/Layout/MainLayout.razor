@@ -1,0 +1,24 @@
+﻿@inherits LayoutComponentBase
+
+@* Host for Radzen dialogs, notifications, tooltips and context menus. Without it those
+   services no-op silently at runtime with no compile-time error. *@
+<RadzenComponents @rendermode="InteractiveServer" />
+
+<RadzenLayout>
+    <RadzenHeader>
+        <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="1rem" class="rz-px-4">
+            <RadzenText TextStyle="TextStyle.H6" class="rz-my-0">GameTracker</RadzenText>
+            <RadzenLink Path="/catalogue/cars" Text="Cars" />
+            <RadzenLink Path="/catalogue/tracks" Text="Tracks" />
+        </RadzenStack>
+    </RadzenHeader>
+    <RadzenBody>
+        @Body
+    </RadzenBody>
+</RadzenLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>

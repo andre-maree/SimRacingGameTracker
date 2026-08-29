@@ -1,0 +1,95 @@
+@page "/catalogue/cars"
+@using GameTracker.Domain.Entities
+@using GameTrackerBlazorServerApp.Data
+@using GameTrackerRazorLibrary.Catalogue
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject CatalogueService Catalogue
+@inject NotificationService Notifications
+@inject DialogService Dialogs
+
+<PageTitle>Cars</PageTitle>
+
+<RadzenStack Gap="1rem" class="rz-p-4">
+    <RadzenRow AlignItems="AlignItems.Center" JustifyContent="JustifyContent.SpaceBetween">
+        <RadzenText TextStyle="TextStyle.H4">Cars</RadzenText>
+        <AuthorizeView Roles="Admin">
+            <RadzenButton Icon="add" Text="Add car" ButtonStyle="ButtonStyle.Primary" Click="@(() => EditAsync(new Car()))" />
+        </AuthorizeView>
+    </RadzenRow>
+
+    @* The grid itself lives in the Razor library and is shared with the desktop client;
+       only the admin row actions are contributed here, since editing is server-only. *@
+    <CarCatalogueGrid @ref="_grid">
+        <RowActions Context="car">
+            <AuthorizeView Roles="Admin" Context="auth">
+                <RadzenButton Icon="edit" Size="ButtonSize.Small" Variant="Variant.Text"
+                              Click="@(() => EditAsync(car))" @onclick:stopPropagation="true" />
+                <RadzenButton Icon="delete" Size="ButtonSize.Small" Variant="Variant.Text"
+                              ButtonStyle="ButtonStyle.Danger"
+                              Click="@(() => DeleteAsync(car))" @onclick:stopPropagation="true" />
+            </AuthorizeView>
+        </RowActions>
+    </CarCatalogueGrid>
+</RadzenStack>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    private CarCatalogueGrid? _grid;
+
+    private async Task EditAsync(Car car)
+    {
+        var saved = await Dialogs.OpenAsync<CarEditor>(
+            car.Id == 0 ? "Add car" : "Edit car",
+            new Dictionary<string, object> { { nameof(CarEditor.Car), Clone(car) } });
+
+        if (saved is true && _grid is not null)
+        {
+            await _grid.ReloadAsync();
+        }
+    }
+
+    private async Task DeleteAsync(Car car)
+    {
+        var confirmed = await Dialogs.Confirm($"Delete '{car.Name}'?", "Confirm delete");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var user = await GetUserAsync();
+            await Catalogue.DeleteCarAsync(user, car.Id);
+
+            if (_grid is not null)
+            {
+                await _grid.ReloadAsync();
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Notifications.Notify(NotificationSeverity.Error, "Not allowed", "Admin role required.");
+        }
+    }
+
+    private async Task<System.Security.Claims.ClaimsPrincipal> GetUserAsync()
+        => AuthenticationState is null
+            ? new System.Security.Claims.ClaimsPrincipal()
+            : (await AuthenticationState).User;
+
+    // Edit a copy so cancelling the dialog cannot leave half-typed values in the grid.
+    private static Car Clone(Car car) => new()
+    {
+        Id = car.Id,
+        GameId = car.GameId,
+        ExternalId = car.ExternalId,
+        Name = car.Name,
+        Manufacturer = car.Manufacturer,
+        Class = car.Class,
+        Year = car.Year
+    };
+}

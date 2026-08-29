@@ -1,0 +1,95 @@
+@using GameTracker.Domain.Entities
+@using GameTrackerBlazorServerApp.Data
+@inject CatalogueService Catalogue
+@inject DialogService Dialogs
+@inject NotificationService Notifications
+
+<RadzenTemplateForm TItem="Track" Data="@Track" Submit="@OnSubmitAsync">
+    <RadzenStack Gap="1rem">
+        <RadzenFormField Text="Game" Variant="Variant.Outlined">
+            <RadzenDropDown @bind-Value="Track.GameId" Data="@_games" TextProperty="Name" ValueProperty="Id"
+                            Name="GameId" Style="width: 100%" />
+            <RadzenRequiredValidator Component="GameId" DefaultValue="0" Text="Game is required" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="R3E Layout Id" Variant="Variant.Outlined">
+            <RadzenNumeric @bind-Value="Track.ExternalId" Name="ExternalId" Style="width: 100%" />
+            @* Shared memory reports LayoutId, not the parent track id: this must be the layout. *@
+            <RadzenNumericRangeValidator Component="ExternalId" Min="1" Text="Must be a positive R3E layout id" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Track" Variant="Variant.Outlined">
+            <RadzenTextBox @bind-Value="Track.Name" Name="Name" Style="width: 100%" />
+            <RadzenRequiredValidator Component="Name" Text="Track name is required" />
+            <RadzenLengthValidator Component="Name" Max="200" Text="Track name is too long" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Layout" Variant="Variant.Outlined">
+            <RadzenTextBox @bind-Value="Track.LayoutName" Name="LayoutName" Style="width: 100%" />
+            <RadzenLengthValidator Component="LayoutName" Max="200" Text="Layout name is too long" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Country" Variant="Variant.Outlined">
+            <RadzenTextBox @bind-Value="Track.Country" Name="Country" Style="width: 100%" />
+            <RadzenLengthValidator Component="Country" Max="100" Text="Country is too long" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Length (m)" Variant="Variant.Outlined">
+            <RadzenNumeric @bind-Value="Track.LengthMetres" Name="LengthMetres" Style="width: 100%" />
+        </RadzenFormField>
+
+        <RadzenRow JustifyContent="JustifyContent.End" Gap="0.5rem">
+            <RadzenButton ButtonType="ButtonType.Submit" Text="Save" ButtonStyle="ButtonStyle.Primary" IsBusy="@_busy" />
+            <RadzenButton Text="Cancel" ButtonStyle="ButtonStyle.Light" Click="@(() => Dialogs.Close(false))" />
+        </RadzenRow>
+    </RadzenStack>
+</RadzenTemplateForm>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    [Parameter]
+    public Track Track { get; set; } = new();
+
+    private List<Game> _games = [];
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _games = await Catalogue.GetGamesAsync();
+
+        if (Track.GameId == 0 && _games.Count == 1)
+        {
+            Track.GameId = _games[0].Id;
+        }
+    }
+
+    private async Task OnSubmitAsync()
+    {
+        _busy = true;
+
+        try
+        {
+            var user = AuthenticationState is null
+                ? new System.Security.Claims.ClaimsPrincipal()
+                : (await AuthenticationState).User;
+
+            await Catalogue.SaveTrackAsync(user, Track);
+            Dialogs.Close(true);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Notifications.Notify(NotificationSeverity.Error, "Not allowed", "Admin role required.");
+        }
+        catch (DbUpdateException)
+        {
+            Notifications.Notify(NotificationSeverity.Error, "Duplicate",
+                "A layout with that R3E id already exists for this game.");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

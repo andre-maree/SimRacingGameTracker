@@ -1,0 +1,56 @@
+@using GameTrackerWpfClientApp.Services.Sync
+@inherits LayoutComponentBase
+@inject CatalogueSyncService CatalogueSync
+@inject NotificationService Notifications
+
+@* Host for Radzen dialogs, notifications and tooltips. Without it those services fail
+   silently at runtime with no compile-time error. *@
+<RadzenComponents />
+
+<RadzenLayout>
+    <RadzenHeader>
+        <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="1rem" class="rz-px-4">
+            <RadzenText TextStyle="TextStyle.H6" class="rz-my-0">GameTracker</RadzenText>
+            <RadzenLink Path="/" Text="Home" />
+            <RadzenLink Path="/catalogue/cars" Text="Cars" />
+            <RadzenLink Path="/catalogue/tracks" Text="Tracks" />
+
+            <RadzenStack Orientation="Orientation.Horizontal" class="rz-ml-auto">
+                @* Disabled while running: the service refuses overlapping syncs anyway,
+                   but a disabled button explains why a second click does nothing. *@
+                <RadzenButton Icon="sync" Text="Sync catalogue" Size="ButtonSize.Small"
+                              Variant="Variant.Flat" IsBusy="@_syncing" Disabled="@_syncing"
+                              Click="@SyncAsync" />
+            </RadzenStack>
+        </RadzenStack>
+    </RadzenHeader>
+    <RadzenBody>
+        @Body
+    </RadzenBody>
+</RadzenLayout>
+
+@code {
+    private bool _syncing;
+
+    private async Task SyncAsync()
+    {
+        _syncing = true;
+
+        try
+        {
+            var result = await CatalogueSync.SyncAsync();
+
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = result.Succeeded ? NotificationSeverity.Success : NotificationSeverity.Warning,
+                Summary = result.Succeeded ? "Catalogue synced" : "Sync incomplete",
+                Detail = result.Succeeded ? $"{result.RowsApplied} row(s) updated." : result.Message,
+                Duration = 4000
+            });
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+}

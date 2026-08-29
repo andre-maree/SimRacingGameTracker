@@ -1,0 +1,12 @@
+@page "/catalogue/cars"
+@using GameTrackerRazorLibrary.Catalogue
+
+<PageTitle>Cars</PageTitle>
+
+<RadzenStack Gap="1rem" class="rz-p-4">
+    <RadzenText TextStyle="TextStyle.H4">Cars</RadzenText>
+
+    @* No row actions: the desktop client is a read-only mirror. Editing happens on the
+       server, which owns the catalogue and issues the sync versions. *@
+    <CarCatalogueGrid EmptyText="No cars available. Sync the catalogue to download them." />
+</RadzenStack>

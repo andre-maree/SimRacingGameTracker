@@ -1,0 +1,21 @@
+/* Shared client styles for the Blazor Hybrid host. Served from
+   _content/GameTrackerRazorLibrary/css/app.css, which is the path index.html expects. */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+}
+
+#app {
+    height: 100%;
+}
+
+.app-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #6b6b6b;
+}

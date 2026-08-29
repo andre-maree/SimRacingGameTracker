@@ -1,0 +1,15 @@
+@* Root component hosted by the BlazorWebView. Assemblies containing routable pages must
+   be listed in AdditionalAssemblies, otherwise shared pages in the Razor library are
+   simply never discovered and every route 404s with no error. *@
+<Router AppAssembly="@typeof(Routes).Assembly"
+        AdditionalAssemblies="new[] { typeof(GameTrackerRazorLibrary.Component1).Assembly }">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(Layout.MainLayout)">
+            <RadzenText TextStyle="TextStyle.H5">Page not found</RadzenText>
+        </LayoutView>
+    </NotFound>
+</Router>

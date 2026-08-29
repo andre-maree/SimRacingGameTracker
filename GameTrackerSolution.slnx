@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Docs/" />
+  <Project Path="GameTracker.Domain/GameTracker.Domain.csproj" />
+  <Project Path="GameTracker.Telemetry/GameTracker.Telemetry.csproj" />
+  <Project Path="GameTrackerBlazorServerApp/GameTrackerBlazorServerApp.csproj" />
+  <Project Path="GameTrackerRazorLibrary/GameTrackerRazorLibrary.csproj" />
+  <Project Path="GameTrackerTestingConsoleApp/GameTrackerTestingConsoleApp.csproj" />
+  <Project Path="GameTrackerWpfClientApp/GameTrackerWpfClientApp.csproj" />
+</Solution>

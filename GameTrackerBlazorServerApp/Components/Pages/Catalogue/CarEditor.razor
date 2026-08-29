@@ -1,0 +1,97 @@
+@using GameTracker.Domain.Entities
+@using GameTrackerBlazorServerApp.Data
+@inject CatalogueService Catalogue
+@inject DialogService Dialogs
+@inject NotificationService Notifications
+
+<RadzenTemplateForm TItem="Car" Data="@Car" Submit="@OnSubmitAsync">
+    <RadzenStack Gap="1rem">
+        <RadzenFormField Text="Game" Variant="Variant.Outlined">
+            <RadzenDropDown @bind-Value="Car.GameId" Data="@_games" TextProperty="Name" ValueProperty="Id"
+                            Name="GameId" Style="width: 100%" />
+            <RadzenRequiredValidator Component="GameId" DefaultValue="0" Text="Game is required" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="R3E Model Id" Variant="Variant.Outlined">
+            <RadzenNumeric @bind-Value="Car.ExternalId" Name="ExternalId" Style="width: 100%" />
+            @* This is the id shared memory reports, so a wrong value silently orphans telemetry. *@
+            <RadzenNumericRangeValidator Component="ExternalId" Min="1" Text="Must be a positive R3E id" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Name" Variant="Variant.Outlined">
+            <RadzenTextBox @bind-Value="Car.Name" Name="Name" Style="width: 100%" />
+            <RadzenRequiredValidator Component="Name" Text="Name is required" />
+            <RadzenLengthValidator Component="Name" Max="200" Text="Name is too long" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Manufacturer" Variant="Variant.Outlined">
+            <RadzenTextBox @bind-Value="Car.Manufacturer" Name="Manufacturer" Style="width: 100%" />
+            <RadzenLengthValidator Component="Manufacturer" Max="200" Text="Manufacturer is too long" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Class" Variant="Variant.Outlined">
+            <RadzenTextBox @bind-Value="Car.Class" Name="Class" Style="width: 100%" />
+            <RadzenLengthValidator Component="Class" Max="100" Text="Class is too long" />
+        </RadzenFormField>
+
+        <RadzenFormField Text="Year" Variant="Variant.Outlined">
+            <RadzenNumeric @bind-Value="Car.Year" Name="Year" Style="width: 100%" />
+        </RadzenFormField>
+
+        <RadzenRow JustifyContent="JustifyContent.End" Gap="0.5rem">
+            <RadzenButton ButtonType="ButtonType.Submit" Text="Save" ButtonStyle="ButtonStyle.Primary" IsBusy="@_busy" />
+            <RadzenButton Text="Cancel" ButtonStyle="ButtonStyle.Light" Click="@(() => Dialogs.Close(false))" />
+        </RadzenRow>
+    </RadzenStack>
+</RadzenTemplateForm>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
+
+    [Parameter]
+    public Car Car { get; set; } = new();
+
+    private List<Game> _games = [];
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _games = await Catalogue.GetGamesAsync();
+
+        if (Car.GameId == 0 && _games.Count == 1)
+        {
+            Car.GameId = _games[0].Id;
+        }
+    }
+
+    private async Task OnSubmitAsync()
+    {
+        _busy = true;
+
+        try
+        {
+            var user = AuthenticationState is null
+                ? new System.Security.Claims.ClaimsPrincipal()
+                : (await AuthenticationState).User;
+
+            await Catalogue.SaveCarAsync(user, Car);
+            Dialogs.Close(true);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Notifications.Notify(NotificationSeverity.Error, "Not allowed", "Admin role required.");
+        }
+        catch (DbUpdateException)
+        {
+            // The unique (GameId, ExternalId) index is the guard that actually holds:
+            // a client-side check would race against a concurrent editor.
+            Notifications.Notify(NotificationSeverity.Error, "Duplicate",
+                "A car with that R3E id already exists for this game.");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

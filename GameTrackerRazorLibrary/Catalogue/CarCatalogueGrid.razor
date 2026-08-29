@@ -1,0 +1,83 @@
+@using GameTracker.Domain.Entities
+@using GameTrackerRazorLibrary.Catalogue
+@inject ICatalogueReader Catalogue
+
+@* Count + LoadData keeps this database-side: only one page is ever fetched, whether the
+   reader behind it is SQL Server or the client's local SQLite mirror. *@
+<RadzenDataGrid @ref="_grid" TItem="Car" Data="@_cars" Count="@_count" LoadData="@LoadDataAsync"
+                AllowPaging="true" PageSize="@PageSize" AllowSorting="true"
+                AllowFiltering="true" FilterMode="FilterMode.Simple"
+                FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive"
+                IsLoading="@_loading" AllowColumnResize="true"
+                EmptyText="@EmptyText">
+    <Columns>
+        <RadzenDataGridColumn TItem="Car" Property="ExternalId" Title="R3E Id" Width="100px" />
+        <RadzenDataGridColumn TItem="Car" Property="Name" Title="Name" />
+        <RadzenDataGridColumn TItem="Car" Property="Manufacturer" Title="Manufacturer" />
+        <RadzenDataGridColumn TItem="Car" Property="Class" Title="Class" />
+        <RadzenDataGridColumn TItem="Car" Property="Year" Title="Year" Width="90px" />
+
+        @* Actions are supplied by the host, not baked in: the server app injects edit and
+           delete buttons, while the read-only desktop client supplies nothing. *@
+        @if (RowActions is not null)
+        {
+            <RadzenDataGridColumn TItem="Car" Title="" Sortable="false" Filterable="false"
+                                  Width="120px" TextAlign="TextAlign.Center">
+                <Template Context="car">
+                    @RowActions(car)
+                </Template>
+            </RadzenDataGridColumn>
+        }
+    </Columns>
+</RadzenDataGrid>
+
+@code {
+    /// <summary>Optional per-row action buttons, rendered in a trailing column.</summary>
+    [Parameter]
+    public RenderFragment<Car>? RowActions { get; set; }
+
+    [Parameter]
+    public int PageSize { get; set; } = 20;
+
+    /// <summary>
+    /// Shown when there are no rows. The desktop client overrides this to explain that a
+    /// sync is needed, which is far more useful than a bare "no records".
+    /// </summary>
+    [Parameter]
+    public string EmptyText { get; set; } = "No cars found.";
+
+    private RadzenDataGrid<Car>? _grid;
+    private IEnumerable<Car> _cars = [];
+    private int _count;
+    private bool _loading;
+
+    /// <summary>Re-runs the current query, e.g. after a catalogue sync has applied changes.</summary>
+    public async Task ReloadAsync()
+    {
+        if (_grid is not null)
+        {
+            await _grid.Reload();
+        }
+    }
+
+    private async Task LoadDataAsync(LoadDataArgs args)
+    {
+        _loading = true;
+
+        try
+        {
+            var result = await Catalogue.GetCarsAsync(
+                args.Skip ?? 0,
+                args.Top ?? PageSize,
+                args.Filter,
+                args.OrderBy);
+
+            _cars = result.Items;
+            _count = result.TotalCount;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

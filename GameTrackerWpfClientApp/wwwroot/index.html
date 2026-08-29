@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GameTracker</title>
+    <base href="/" />
+    <!-- Radzen theme first, so app.css can override it rather than being overridden. -->
+    <link rel="stylesheet" href="_content/Radzen.Blazor/css/material-base.css" />
+    <link href="_content/GameTrackerRazorLibrary/css/app.css" rel="stylesheet" />
+</head>
+<body>
+    <div id="app"><div class="app-loading">Loading GameTracker...</div></div>
+
+    <!-- Blazor desktop engine framework script -->
+    <script src="_framework/blazor.webview.js"></script>
+    <!-- Radzen interactivity: dialogs, notifications and tooltips need this at runtime. -->
+    <script src="_content/Radzen.Blazor/Radzen.Blazor.js"></script>
+</body>
+</html>

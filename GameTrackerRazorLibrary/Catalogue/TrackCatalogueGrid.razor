@@ -1,0 +1,74 @@
+@using GameTracker.Domain.Entities
+@using GameTrackerRazorLibrary.Catalogue
+@inject ICatalogueReader Catalogue
+
+<RadzenDataGrid @ref="_grid" TItem="Track" Data="@_tracks" Count="@_count" LoadData="@LoadDataAsync"
+                AllowPaging="true" PageSize="@PageSize" AllowSorting="true"
+                AllowFiltering="true" FilterMode="FilterMode.Simple"
+                FilterCaseSensitivity="FilterCaseSensitivity.CaseInsensitive"
+                IsLoading="@_loading" AllowColumnResize="true"
+                EmptyText="@EmptyText">
+    <Columns>
+        <RadzenDataGridColumn TItem="Track" Property="ExternalId" Title="Layout Id" Width="110px" />
+        <RadzenDataGridColumn TItem="Track" Property="Name" Title="Track" />
+        <RadzenDataGridColumn TItem="Track" Property="LayoutName" Title="Layout" />
+        <RadzenDataGridColumn TItem="Track" Property="Country" Title="Country" />
+        <RadzenDataGridColumn TItem="Track" Property="LengthMetres" Title="Length (m)" Width="120px"
+                              FormatString="{0:N0}" />
+
+        @if (RowActions is not null)
+        {
+            <RadzenDataGridColumn TItem="Track" Title="" Sortable="false" Filterable="false"
+                                  Width="120px" TextAlign="TextAlign.Center">
+                <Template Context="track">
+                    @RowActions(track)
+                </Template>
+            </RadzenDataGridColumn>
+        }
+    </Columns>
+</RadzenDataGrid>
+
+@code {
+    [Parameter]
+    public RenderFragment<Track>? RowActions { get; set; }
+
+    [Parameter]
+    public int PageSize { get; set; } = 20;
+
+    [Parameter]
+    public string EmptyText { get; set; } = "No tracks found.";
+
+    private RadzenDataGrid<Track>? _grid;
+    private IEnumerable<Track> _tracks = [];
+    private int _count;
+    private bool _loading;
+
+    public async Task ReloadAsync()
+    {
+        if (_grid is not null)
+        {
+            await _grid.Reload();
+        }
+    }
+
+    private async Task LoadDataAsync(LoadDataArgs args)
+    {
+        _loading = true;
+
+        try
+        {
+            var result = await Catalogue.GetTracksAsync(
+                args.Skip ?? 0,
+                args.Top ?? PageSize,
+                args.Filter,
+                args.OrderBy);
+
+            _tracks = result.Items;
+            _count = result.TotalCount;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
