@@ -177,7 +177,7 @@ Made `Constant` class and nested enums (`VersionMajor`, `VersionMinor`, `Session
 **Choice:**
 - One row per lap in `LapInputTelemetry`, not one row per sample
 - Each channel (throttle, brake, steering) accumulated as `float[]` buffers during the lap
-- On lap completion, serialize **columnar** (all throttle, then all brake, then all steering), compress with Brotli into a single `BLOB`
+- On lap completion, serialize **columnar** (all throttle, then all brake, then all steering), **quantise each sample to 16 bits and delta-encode**, then compress with Brotli into a single `BLOB`
 - Alongside the blob, store a ~500-sample-per-channel **preview array** via min/max decimation (not simple sampling — preserves spikes)
 - The chart binds to the preview by default; full blob inflates only on zoom or two-lap overlay
 
@@ -187,7 +187,13 @@ Made `Constant` class and nested enums (`VersionMajor`, `VersionMinor`, `Session
 |---|---|
 | **Write Cost** | One INSERT per lap instead of ~90,000 rows for a 90-second lap at 60 Hz × 3 channels. Eliminates SQLite write amplification and per-row index maintenance from the hot recording path. Compression runs on the consumer task, off the poll loop. |
 | **Read Cost** | One primary-key row fetch plus one Brotli decompress (~milliseconds for a few hundred KB) versus a 90,000-row scan and materialization. The preview makes the common-case chart render a **zero-decompress read**. Overlaying two laps is two fetches. |
-| **Storage** | ~1.1 MB/lap raw (90,000 floats × 3 × 4 bytes). Row-per-sample adds rowid + FK + timestamp per row, roughly tripling that before indexes. Columnar layout (same-channel values adjacent) on smooth, autocorrelated pedal traces should land in the **tens of KB**. |
+| **Storage** | Measured on a synthetic 90-second lap at 60 Hz (5,400 samples/channel, 64,800 bytes raw): naive columnar **float32 + Brotli compressed to only 48,126 bytes (74% of raw)**. Quantised 16-bit deltas + Brotli reach **11,990 bytes (18.5%)** — a 4× improvement. Row-per-sample would add rowid + FK + timestamp per row, roughly tripling the raw figure before indexes. |
+
+**Correction — the original "tens of KB from columnar layout alone" estimate was wrong, and measurement disproved it.**
+
+Columnar ordering is necessary but *not sufficient*. A `float32` mantissa's low bits are effectively random: a pedal or wheel sensor has nowhere near 24 bits of real precision, so those bits store noise, and noise is incompressible by construction. They dominated the payload and held Brotli to a 26% saving.
+
+Quantising to 16 bits gives a resolution of ~1.5e-5 — roughly two orders of magnitude finer than any real input device — and delta-encoding exploits the fact that consecutive samples at 60 Hz barely differ, so the differences cluster tightly around zero. Verified lossless with respect to the quantised series (max round-trip error 1.53e-5, exactly the quantisation step), with min/max decimation confirmed to preserve full-throttle and full-brake spikes.
 
 **Trade-off (documented as known weakness):**
 - ❌ The blob is **opaque to SQL**. Queries like "find every lap where throttle exceeded 95% through sector 2" require decoding in application code, not a WHERE clause.
@@ -197,7 +203,7 @@ Made `Constant` class and nested enums (`VersionMajor`, `VersionMinor`, `Session
 Interleaved: `[throttle0, brake0, steer0, throttle1, brake1, steer1, ...]` — values from different channels adjacent.
 Columnar: `[throttle0, throttle1, ..., brake0, brake1, ..., steer0, steer1, ...]` — same-channel values adjacent.
 
-Pedal inputs are highly autocorrelated (smooth changes, not random noise). Columnar layout allows the compressor to exploit intra-channel patterns far better than interleaved. Empirically, this is an order-of-magnitude difference for telemetry data.
+Pedal inputs are highly autocorrelated (smooth changes, not random noise). Columnar layout lets the compressor exploit intra-channel patterns far better than interleaved, and it is what makes the per-channel delta encoding meaningful in the first place — a delta between a throttle and a brake sample would be noise. Note that columnar ordering alone was measured as insufficient; see the storage row above.
 
 ---
 

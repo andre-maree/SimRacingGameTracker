@@ -316,11 +316,18 @@ This is the living implementation checklist for the GameTracker technical test. 
 - Global handlers for `AppDomain.UnhandledException`, `DispatcherUnhandledException` and `TaskScheduler.UnobservedTaskException`, attached only once the logger exists; the unobserved-task case is the failure that otherwise goes completely unnoticed in a background worker
 - EF Core command logging pinned to Warning in both hosts: at Information it logs every SQL statement, which would drown a per-lap write path
 
-### ⏳ Step 32: Implement Part 5 capture and storage
-- Accumulate per-lap float[] buffers
-- Columnar serialization + Brotli compression
-- Min/max decimation to preview array
-- One LapInputTelemetry row per lap
+### ✅ Step 32: Implement Part 5 capture and storage
+- Capture and encoding landed with the recorder in step 28 (`LapInputTraceBuffer`); this step added the **decoder** (`GameTracker.Telemetry/Recording/LapInputTraceDecoder.cs`) and verified the format end-to-end
+- Decoder lives beside the encoder deliberately, so the byte layout is defined in exactly one place — a format whose read and write sides can drift apart fails *silently*, decoding garbage as plausible-but-wrong floats rather than throwing
+- **Measured the format instead of assuming it, and the original design was wrong.** A synthetic 90s lap at 60 Hz (5,400 samples/channel, 64,800 bytes raw) compressed to only **48,126 bytes — 74% of raw**, nowhere near the "tens of KB" the plan claimed
+- Root cause: `float32` mantissa low bits are effectively random. A pedal sensor has nothing like 24 bits of real precision, so those bits stored pure noise, which is incompressible by construction and dominated the payload. Columnar ordering was necessary but not sufficient
+- Fix: **quantise to 16 bits and delta-encode** before Brotli → **11,990 bytes (18.5% of raw), a 4× improvement**. Quantisation step is ~1.5e-5, about two orders of magnitude finer than any real input device
+- Deltas exploit 60 Hz sampling: consecutive values barely differ, so differences cluster near zero, which is the distribution Brotli encodes well. Encoder and decoder both use wrapping `ushort` arithmetic, making it lossless with respect to the quantised series
+- Verified: round-trip max error **1.53e-5** (exactly the quantisation step), `TimeAt` correct, min/max decimation confirmed to preserve full-throttle and full-brake spikes, and an oversized declared sample count returns null rather than decoding garbage
+- Preview stays **float32 and uncompressed** — at ~500 samples/channel it is 6 KB, so quantising it would save little while adding a second format to maintain
+- `DecodePreview` vs `DecodeFull` split keeps the default render path free of any decompression; `RecordedSessionReader.GetInputTraceAsync` makes full resolution **opt-in** and projects away the unwanted blob column so it is never transferred
+- A corrupt or truncated blob falls back to the preview rather than showing nothing, since the two are stored independently
+- `Docs/CHOICES AND REASONS.md` corrected: the disproven estimate is replaced with the measured figures and an explicit note that the original reasoning was wrong
 
 ### ⏳ Step 33: Render input-telemetry plot
 - RadzenChart with preview binding

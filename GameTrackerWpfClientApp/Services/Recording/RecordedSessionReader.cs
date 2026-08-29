@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using GameTracker.Domain.Enums;
+using GameTracker.Telemetry.Recording;
 using GameTrackerWpfClientApp.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -192,6 +193,61 @@ public sealed class RecordedSessionReader
             uploadedSet.Contains(l.Id),
             l.HasInputTrace))
             .ToList();
+    }
+
+    /// <summary>
+    /// Loads a lap's input trace, preferring the cheap preview.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="fullResolution"/> is opt-in so the default render path never
+    /// inflates a blob. Only a zoom or a two-lap overlay justifies decompressing ~16,000
+    /// samples per channel.
+    /// </remarks>
+    public async Task<DecodedInputTrace?> GetInputTraceAsync(
+        Guid lapId,
+        bool fullResolution = false,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+
+        // Projected so the unwanted blob column is not transferred: selecting the entity
+        // would pull the full compressed payload even when only the preview is needed.
+        var trace = await context.LapInputTelemetry
+            .AsNoTracking()
+            .Where(t => t.LapId == lapId)
+            .Select(t => new
+            {
+                t.SampleCount,
+                t.SampleRateHz,
+                t.PreviewSampleCount,
+                Preview = fullResolution ? null : t.Preview,
+                Compressed = fullResolution ? t.CompressedChannels : null
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (trace is null)
+        {
+            return null;
+        }
+
+        if (fullResolution && trace.Compressed is not null)
+        {
+            var full = LapInputTraceDecoder.DecodeFull(trace.Compressed, trace.SampleCount, trace.SampleRateHz);
+
+            if (full is not null)
+            {
+                return full;
+            }
+
+            // A corrupt or truncated blob falls back to the preview rather than showing
+            // nothing: a low-resolution trace is still useful, and the preview is stored
+            // independently of the compressed payload.
+            return await GetInputTraceAsync(lapId, fullResolution: false, cancellationToken);
+        }
+
+        return trace.Preview is null
+            ? null
+            : LapInputTraceDecoder.DecodePreview(trace.Preview, trace.PreviewSampleCount, trace.SampleRateHz);
     }
 
     /// <summary>
