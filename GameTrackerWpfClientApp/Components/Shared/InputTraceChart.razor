@@ -1,0 +1,183 @@
+@using GameTracker.Telemetry.Recording
+@using GameTrackerWpfClientApp.Services.Recording
+@inject RecordedSessionReader Reader
+
+@* Driver input trace. Renders the stored preview by default and only inflates the
+   compressed blob when the user asks for full resolution or adds a comparison lap. *@
+<RadzenStack Gap="0.75rem">
+    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="1rem">
+        <RadzenText TextStyle="TextStyle.H6" class="rz-my-0">Driver inputs</RadzenText>
+
+        @if (_primary is not null)
+        {
+            <RadzenCheckBox @bind-Value="@_fullResolution" Name="fullRes"
+                            Change="@(async (bool _) => await ReloadAsync())" TValue="bool" />
+            <RadzenLabel Text="Full resolution" Component="fullRes" />
+
+            @* The cost is stated rather than hidden: inflating is the expensive path the
+               preview exists to avoid, so the user can see why it is opt-in. *@
+            <RadzenText TextStyle="TextStyle.Caption" class="rz-my-0">
+                @(_fullResolution
+                    ? $"{_primary.SampleCount:N0} samples, decompressed"
+                    : "Decimated preview, no decompression")
+            </RadzenText>
+        }
+
+        @if (CompareLapId is not null)
+        {
+            <RadzenBadge Text="Overlay" BadgeStyle="BadgeStyle.Info" />
+        }
+    </RadzenStack>
+
+    @if (_loading)
+    {
+        <RadzenProgressBarCircular ShowValue="false" Mode="ProgressBarMode.Indeterminate" Size="ProgressBarCircularSize.Small" />
+    }
+    else if (_primarySeries is null)
+    {
+        <RadzenText TextStyle="TextStyle.Body2">No input trace was recorded for this lap.</RadzenText>
+    }
+    else
+    {
+        <RadzenChart>
+            @* Explicit min/max: an auto-scaled axis would rescale between laps and make
+               two traces look different when only the axis moved. *@
+            <RadzenValueAxis Min="-100" Max="100" Step="50">
+                <RadzenAxisTitle Text="Input (%)" />
+            </RadzenValueAxis>
+
+            <RadzenCategoryAxis Padding="20">
+                <RadzenAxisTitle Text="@_primarySeries.AxisTitle" />
+            </RadzenCategoryAxis>
+
+            <RadzenLineSeries Data="@_primarySeries.Points" CategoryProperty="Position"
+                              ValueProperty="Throttle" Title="@ThrottleTitle"
+                              Stroke="#2e7d32" StrokeWidth="2" Smooth="false">
+                <RadzenMarkers Visible="false" />
+            </RadzenLineSeries>
+
+            <RadzenLineSeries Data="@_primarySeries.Points" CategoryProperty="Position"
+                              ValueProperty="Brake" Title="@BrakeTitle"
+                              Stroke="#c62828" StrokeWidth="2" Smooth="false">
+                <RadzenMarkers Visible="false" />
+            </RadzenLineSeries>
+
+            <RadzenLineSeries Data="@_primarySeries.Points" CategoryProperty="Position"
+                              ValueProperty="Steering" Title="@SteeringTitle"
+                              Stroke="#1565c0" StrokeWidth="1" Smooth="false">
+                <RadzenMarkers Visible="false" />
+            </RadzenLineSeries>
+
+            @if (_compareSeries is not null)
+            {
+                @* The comparison lap reuses the same hues at reduced weight rather than
+                   introducing three new colours: the channel stays identifiable, and the
+                   lap is distinguished by weight instead. *@
+                <RadzenLineSeries Data="@_compareSeries.Points" CategoryProperty="Position"
+                                  ValueProperty="Throttle" Title="@($"Throttle ({_compareSeries.Label})")"
+                                  Stroke="#81c784" StrokeWidth="1" Smooth="false">
+                    <RadzenMarkers Visible="false" />
+                </RadzenLineSeries>
+
+                <RadzenLineSeries Data="@_compareSeries.Points" CategoryProperty="Position"
+                                  ValueProperty="Brake" Title="@($"Brake ({_compareSeries.Label})")"
+                                  Stroke="#e57373" StrokeWidth="1" Smooth="false">
+                    <RadzenMarkers Visible="false" />
+                </RadzenLineSeries>
+
+                <RadzenLineSeries Data="@_compareSeries.Points" CategoryProperty="Position"
+                                  ValueProperty="Steering" Title="@($"Steering ({_compareSeries.Label})")"
+                                  Stroke="#64b5f6" StrokeWidth="1" Smooth="false">
+                    <RadzenMarkers Visible="false" />
+                </RadzenLineSeries>
+            }
+
+            <RadzenLegend Position="LegendPosition.Bottom" />
+        </RadzenChart>
+
+        @if (_axisMismatch)
+        {
+            @* Two traces on different axes cannot be compared honestly, so this warns
+               rather than silently plotting them against each other. *@
+            <RadzenAlert AlertStyle="AlertStyle.Warning" ShowIcon="true" AllowClose="false" Size="AlertSize.Small">
+                The compared laps were captured at different resolutions. Enable full
+                resolution on both for an accurate overlay.
+            </RadzenAlert>
+        }
+    }
+</RadzenStack>
+
+@code {
+    /// <summary>The lap whose trace is plotted.</summary>
+    [Parameter, EditorRequired] public Guid LapId { get; set; }
+
+    /// <summary>Optional second lap drawn over the first.</summary>
+    [Parameter] public Guid? CompareLapId { get; set; }
+
+    [Parameter] public string PrimaryLabel { get; set; } = "this lap";
+
+    [Parameter] public string CompareLabel { get; set; } = "comparison";
+
+    private DecodedInputTrace? _primary;
+    private InputTraceSeries? _primarySeries;
+    private InputTraceSeries? _compareSeries;
+    private bool _fullResolution;
+    private bool _loading;
+    private bool _axisMismatch;
+
+    // Tracks what was last loaded so OnParametersSetAsync can tell a genuine lap change
+    // from an unrelated re-render, which would otherwise re-query on every parent update.
+    private Guid _loadedLapId;
+    private Guid? _loadedCompareId;
+
+    private string ThrottleTitle => _compareSeries is null ? "Throttle" : $"Throttle ({PrimaryLabel})";
+    private string BrakeTitle => _compareSeries is null ? "Brake" : $"Brake ({PrimaryLabel})";
+    private string SteeringTitle => _compareSeries is null ? "Steering" : $"Steering ({PrimaryLabel})";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (LapId == _loadedLapId && CompareLapId == _loadedCompareId)
+        {
+            return;
+        }
+
+        // Selecting a different lap resets to the cheap path: carrying full resolution
+        // across would silently decompress every lap the user clicks through.
+        _fullResolution = false;
+
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadedLapId = LapId;
+        _loadedCompareId = CompareLapId;
+
+        try
+        {
+            _primary = await Reader.GetInputTraceAsync(LapId, _fullResolution);
+            _primarySeries = _primary is null ? null : InputTraceProjector.Project(_primary, PrimaryLabel);
+
+            if (CompareLapId is { } compareId)
+            {
+                var compare = await Reader.GetInputTraceAsync(compareId, _fullResolution);
+                _compareSeries = compare is null ? null : InputTraceProjector.Project(compare, CompareLabel);
+            }
+            else
+            {
+                _compareSeries = null;
+            }
+
+            // A trace can fall back to its preview when its blob is corrupt, so the two
+            // series can end up on different axes even when both were requested full.
+            _axisMismatch = _primarySeries is not null
+                && _compareSeries is not null
+                && _primarySeries.IsTimeAxis != _compareSeries.IsTimeAxis;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

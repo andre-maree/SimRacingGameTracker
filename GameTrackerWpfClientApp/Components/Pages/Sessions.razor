@@ -92,6 +92,8 @@
         <RadzenDataGrid Data="@_laps" TItem="RecordedLapRow" AllowSorting="true"
                         AllowPaging="true" PageSize="20" IsLoading="@_loadingLaps"
                         RowRender="@OnLapRender"
+                        SelectionMode="DataGridSelectionMode.Single" Value="@_selectedLaps"
+                        RowSelect="@OnLapSelected"
                         EmptyText="No completed laps in this session.">
             <Columns>
                 <RadzenDataGridColumn TItem="RecordedLapRow" Property="StintNumber" Title="Stint" Width="80px" />
@@ -139,8 +141,33 @@
                         </RadzenStack>
                     </Template>
                 </RadzenDataGridColumn>
+
+                <RadzenDataGridColumn TItem="RecordedLapRow" Title="Compare" Width="110px" Sortable="false">
+                    <Template Context="lap">
+                        @* Only laps that actually have a trace can be overlaid, and a lap
+                           cannot be compared against itself. *@
+                        @if (lap.HasInputTrace && lap.Id != _plottedLapId)
+                        {
+                            <RadzenButton Size="ButtonSize.ExtraSmall" Variant="Variant.Flat"
+                                          Text="@(_compareLapId == lap.Id ? "Clear" : "Overlay")"
+                                          ButtonStyle="@(_compareLapId == lap.Id ? ButtonStyle.Secondary : ButtonStyle.Base)"
+                                          Click="@(() => ToggleCompare(lap))" />
+                        }
+                    </Template>
+                </RadzenDataGridColumn>
             </Columns>
         </RadzenDataGrid>
+    }
+
+    @if (_plottedLapId is { } plottedId)
+    {
+        @* Keyed on both laps so switching either one rebuilds the chart rather than
+           reusing a component still holding the previous trace. *@
+        <InputTraceChart @key="(plottedId, _compareLapId)"
+                         LapId="@plottedId"
+                         CompareLapId="@_compareLapId"
+                         PrimaryLabel="@_plottedLabel"
+                         CompareLabel="@_compareLabel" />
     }
 </RadzenStack>
 
@@ -152,6 +179,14 @@
     // Radzen single selection still binds a list, so the selected session is held as a
     // one-element collection rather than a scalar.
     private IList<RecordedSessionRow> _selected = [];
+    private IList<RecordedLapRow> _selectedLaps = [];
+
+    // The plotted lap is tracked separately from grid selection: selecting a lap without a
+    // trace must not blank an already-useful chart.
+    private Guid? _plottedLapId;
+    private Guid? _compareLapId;
+    private string _plottedLabel = string.Empty;
+    private string _compareLabel = string.Empty;
 
     private bool _loading;
     private bool _loadingLaps;
@@ -211,12 +246,53 @@
         try
         {
             _laps = await Reader.GetLapsAsync(session.Id);
+
+            // Laps from another session are meaningless here, so any plot state is dropped
+            // rather than left pointing at rows the user can no longer see.
+            _selectedLaps = [];
+            _plottedLapId = null;
+            _compareLapId = null;
         }
         finally
         {
             _loadingLaps = false;
         }
     }
+
+    private void OnLapSelected(RecordedLapRow lap)
+    {
+        _selectedLaps = [lap];
+
+        if (!lap.HasInputTrace)
+        {
+            return;
+        }
+
+        // Promoting the current overlay would leave the same lap on both series, so the
+        // overlay is cleared when it becomes the primary.
+        if (_compareLapId == lap.Id)
+        {
+            _compareLapId = null;
+        }
+
+        _plottedLapId = lap.Id;
+        _plottedLabel = LapLabel(lap);
+    }
+
+    private void ToggleCompare(RecordedLapRow lap)
+    {
+        if (_compareLapId == lap.Id)
+        {
+            _compareLapId = null;
+            return;
+        }
+
+        _compareLapId = lap.Id;
+        _compareLabel = LapLabel(lap);
+    }
+
+    private static string LapLabel(RecordedLapRow lap) =>
+        $"L{lap.LapNumber} {RecordedSessionReader.FormatTime(lap.LapTime)}";
 
     private void OnLapRender(RowRenderEventArgs<RecordedLapRow> args)
     {

@@ -329,10 +329,19 @@ This is the living implementation checklist for the GameTracker technical test. 
 - A corrupt or truncated blob falls back to the preview rather than showing nothing, since the two are stored independently
 - `Docs/CHOICES AND REASONS.md` corrected: the disproven estimate is replaced with the measured figures and an explicit note that the original reasoning was wrong
 
-### ⏳ Step 33: Render input-telemetry plot
-- RadzenChart with preview binding
-- Inflate blob on zoom
-- Two-lap overlay support
+### ✅ Step 33: Render input-telemetry plot
+- `InputTraceProjector` flattens a `DecodedInputTrace` into chart points, decimating to at
+  most 1,200 plotted points because an SVG chart cannot resolve more points than pixels
+- Preview traces have no meaningful sample rate (they are min/max decimated, so unevenly
+  spaced in time), so they are plotted against lap-progress percentage while full traces
+  are plotted against elapsed seconds
+- `InputTraceChart` binds the cheap preview by default and only decompresses the blob when
+  the user opts into full resolution, keeping the default render path allocation-free
+- Two-lap overlay reuses the same channel hues at lower stroke weight so the channel stays
+  identifiable and the lap is distinguished by weight
+- A warning is shown when the two overlaid traces ended up on different axes (possible when
+  a corrupt blob falls back to its preview), since comparing them would be misleading
+- `Sessions.razor` gained lap selection and an overlay toggle to drive the chart
 
 ### ⏳ Step 34: Complete documentation
 - README with clean-checkout commands
