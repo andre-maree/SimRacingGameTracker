@@ -10,6 +10,7 @@ using GameTrackerWpfClientApp.Services.Authentication;
 using GameTrackerWpfClientApp.Services.Catalogue;
 using GameTrackerWpfClientApp.Services.Recording;
 using GameTrackerWpfClientApp.Services.Sync;
+using GameTrackerWpfClientApp.Services.Upload;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -146,6 +147,10 @@ namespace GameTrackerWpfClientApp
             // can subscribe to StatusChanged on the very same object the host is running.
             services.AddSingleton<SessionRecorder>();
             services.AddHostedService(sp => sp.GetRequiredService<SessionRecorder>());
+
+            // Same pattern: the UI reads PendingCount off the running instance.
+            services.AddSingleton<TelemetryUploadService>();
+            services.AddHostedService(sp => sp.GetRequiredService<TelemetryUploadService>());
 
             // Radzen dialog/notification/tooltip/context-menu services: the desktop
             // equivalent of AddRadzenComponents() on the server.

@@ -268,10 +268,19 @@ This is the living implementation checklist for the GameTracker technical test. 
 - Min/max per bucket rather than every-Nth sampling, because plain sampling drops the brief full-throttle and full-brake spikes that are the entire point of the trace
 - Little-endian written explicitly rather than via `BitConverter`, so a blob written on the desktop and read on the server does not depend on the architecture that touched it
 
-### ⏳ Step 29: Implement background uploader
-- Drain LocalTelemetry and sessions
-- Exponential-backoff retry
-- Mark sent only after 2xx
+### ✅ Step 29: Implement background uploader
+- `GameTrackerWpfClientApp/Services/Upload/TelemetryUploadService.cs` — a `BackgroundService` draining `LocalTelemetry` and its parent sessions to the server
+- Upload is deliberately **outside** the recording path: a lap is durable in SQLite the instant it is driven, so losing connectivity delays publication but never data
+- Retries are safe only because both endpoints are **idempotent on the client-generated GUID**. The ambiguous failure — a request that reached the server and committed, but whose response was lost — is indistinguishable from a real failure on the client, so retrying must always be correct
+- **Sessions are upserted before their laps**, since laps are stored against a session id and the reverse order would briefly expose laps whose parent session does not exist
+- The session is **re-posted every drain** rather than marked "sent once": the endpoint is an upsert, and a session uploaded mid-run must later publish its closing details
+- `UploadedAtUtc` is stamped **only after a 2xx**, and server-reported **duplicates count as delivered** — a duplicate is positive confirmation that an earlier attempt committed, so leaving it queued would retry it forever
+- Backoff doubles from **5s**, **capped at 5 minutes**: uncapped doubling would leave the client sulking for hours after a brief server restart
+- Success resets the backoff; idle polling is **30s**
+- Skips entirely while signed out, since requests certain to 401 only burn the backoff window and spam the log
+- 401 stops the cycle without retry (the auth handler has already cleared the token); other 4xx logs at Warning because a rejected payload will never succeed on retry and needs a human
+- The loop swallows all exceptions by design — it is the only thing that ever clears the local queue, so letting it die would silently strand every lap recorded from that point on
+- Batches of **500** to match the server limit, oldest first so a backlog publishes in the order it was driven; a short batch ends the drain
 
 ### ⏳ Step 30: Build recorded-sessions desktop UI
 - Radzen master/detail
