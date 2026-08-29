@@ -1,0 +1,115 @@
+@page "/login"
+@using GameTrackerWpfClientApp.Services.Authentication
+@inject AuthenticationService Auth
+@inject AuthenticationState AuthState
+@inject NavigationManager Navigation
+
+@* Sign-in surface for the desktop client. The token plumbing (AuthenticationService,
+   AuthenticationState, DpapiTokenStore) already existed; this is the UI that drives it. *@
+
+<PageTitle>Sign in</PageTitle>
+
+<RadzenStack Gap="1rem" class="rz-p-4" Style="max-width: 420px; margin: 4rem auto;">
+    <h1>Sign in</h1>
+
+    <RadzenText TextStyle="TextStyle.Body2">
+        Sign in with an account from the GameTracker server. Recorded laps are stored locally
+        either way, but syncing the catalogue and uploading sessions both require a token.
+    </RadzenText>
+
+    @* Bound to a model with the same DataAnnotations the server enforces, so an obviously
+       invalid address is caught here rather than costing a round trip. *@
+    <RadzenTemplateForm TItem="LoginModel" Data="@_model" Submit="@OnSubmitAsync">
+        <RadzenStack Gap="1rem">
+            <RadzenFormField Text="Email" Variant="Variant.Outlined">
+                <ChildContent>
+                    <RadzenTextBox Name="Email" @bind-Value="@_model.Email"
+                                   Disabled="@_busy" autofocus />
+                </ChildContent>
+                <Helper>
+                    <RadzenRequiredValidator Component="Email" Text="Email is required." />
+                    <RadzenEmailValidator Component="Email" Text="Enter a valid email address." />
+                </Helper>
+            </RadzenFormField>
+
+            <RadzenFormField Text="Password" Variant="Variant.Outlined">
+                <ChildContent>
+                    <RadzenPassword Name="Password" @bind-Value="@_model.Password"
+                                    Disabled="@_busy" />
+                </ChildContent>
+                <Helper>
+                    <RadzenRequiredValidator Component="Password" Text="Password is required." />
+                </Helper>
+            </RadzenFormField>
+
+            @if (_error is not null)
+            {
+                @* The server returns an undifferentiated 401 for both a bad password and an
+                   unknown account, so the message stays vague on purpose: saying which one
+                   was wrong would turn this form into an account enumeration oracle. *@
+                <RadzenAlert AlertStyle="AlertStyle.Danger" ShowIcon="true"
+                             AllowClose="false" Size="AlertSize.Small">
+                    @_error
+                </RadzenAlert>
+            }
+
+            <RadzenButton ButtonType="ButtonType.Submit" Text="Sign in"
+                          IsBusy="@_busy" BusyText="Signing in..." Disabled="@_busy"
+                          Style="width: 100%;" />
+        </RadzenStack>
+    </RadzenTemplateForm>
+</RadzenStack>
+
+@code {
+    private readonly LoginModel _model = new();
+    private bool _busy;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        // A restored token means the startup path already signed this user in; landing here
+        // again would be a dead end with no way forward.
+        if (AuthState.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/");
+        }
+    }
+
+    private async Task OnSubmitAsync()
+    {
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            var succeeded = await Auth.SignInAsync(_model.Email, _model.Password);
+
+            if (succeeded)
+            {
+                // Cleared rather than left bound: the password should not survive in memory
+                // on a component the router may keep alive.
+                _model.Password = string.Empty;
+                Navigation.NavigateTo("/");
+                return;
+            }
+
+            _error = "Sign-in failed. Check the email and password and try again.";
+        }
+        catch (Exception ex)
+        {
+            // An unreachable server is the common case here and is worth distinguishing
+            // from rejected credentials, since the fix is entirely different.
+            _error = $"Could not reach the server. {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class LoginModel
+    {
+        public string Email { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+    }
+}

@@ -157,9 +157,30 @@ deliberately skips creation rather than falling back to a guessable default.
 ## API Endpoints
 
 ### Authentication
-- `POST /api/auth/login` — returns a 24-hour JWT (body: `{ "username": "...", "password": "..." }`)
+- `POST /api/auth/login` — returns a 24-hour JWT (body: `{ "email": "...", "password": "..." }`)
 - `POST /register` — Identity default (via `MapIdentityApi`)
 - `POST /logout` — Identity default
+
+The login endpoint returns an undifferentiated `401` for both an unknown account and a bad
+password (account enumeration would otherwise be trivial), and `423` when Identity has locked
+the account out.
+
+#### Proving the auth path by hand
+
+The desktop client signs in through the **Sign in** button in the toolbar, which posts to the
+same endpoint. To verify the server half independently of the UI:
+
+```powershell
+$body = @{ email = "admin@gametracker.local"; password = "<your seeded password>" } | ConvertTo-Json
+$token = (Invoke-RestMethod -Uri "https://localhost:7157/api/auth/login" `
+    -Method Post -Body $body -ContentType "application/json").accessToken
+
+Invoke-RestMethod -Uri "https://localhost:7157/api/sync/changes?since=0&take=5" `
+    -Headers @{ Authorization = "Bearer $token" }
+```
+
+A populated `accessToken` plus a successful sync response confirms the token pipeline end to
+end. The same call without the `Authorization` header should return `401`.
 
 ### Sync
 - `GET /api/sync/changes?since={version}&take={count}` — incremental catalogue sync

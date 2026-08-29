@@ -1,7 +1,12 @@
 @using GameTrackerWpfClientApp.Services.Sync
+@using GameTrackerWpfClientApp.Services.Authentication
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject CatalogueSyncService CatalogueSync
 @inject NotificationService Notifications
+@inject AuthenticationState AuthState
+@inject AuthenticationService Auth
+@inject NavigationManager Navigation
 
 @* Host for Radzen dialogs, notifications and tooltips. Without it those services fail
    silently at runtime with no compile-time error. *@
@@ -16,12 +21,35 @@
             <RadzenLink Path="/catalogue/cars" Text="Cars" />
             <RadzenLink Path="/catalogue/tracks" Text="Tracks" />
 
-            <RadzenStack Orientation="Orientation.Horizontal" class="rz-ml-auto">
-                @* Disabled while running: the service refuses overlapping syncs anyway,
-                   but a disabled button explains why a second click does nothing. *@
+            <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center"
+                         Gap="0.5rem" class="rz-ml-auto">
+                @* Always visible, even signed out. On a fresh install the catalogue mirror is
+                   empty until the first sync, so hiding this would leave the empty Cars and
+                   Tracks grids with no explanation and no way forward. *@
                 <RadzenButton Icon="sync" Text="Sync catalogue" Size="ButtonSize.Small"
                               Variant="Variant.Flat" IsBusy="@_syncing" Disabled="@_syncing"
                               Click="@SyncAsync" />
+
+                @if (AuthState.IsAuthenticated)
+                {
+                    @if (AuthState.IsAdmin)
+                    {
+                        <RadzenBadge Text="Admin" BadgeStyle="BadgeStyle.Info" />
+                    }
+
+                    <RadzenButton Icon="logout" Text="Sign out" Size="ButtonSize.Small"
+                                  Variant="Variant.Text" ButtonStyle="ButtonStyle.Secondary"
+                                  Click="@SignOutAsync" />
+                }
+                else
+                {
+                    @* Browsing works offline, so this states a fact rather than blocking. *@
+                    <RadzenText TextStyle="TextStyle.Caption" class="rz-my-0">Offline</RadzenText>
+
+                    <RadzenButton Icon="login" Text="Sign in" Size="ButtonSize.Small"
+                                  Variant="Variant.Flat"
+                                  Click="@(() => Navigation.NavigateTo("/login"))" />
+                }
             </RadzenStack>
         </RadzenStack>
     </RadzenHeader>
@@ -33,8 +61,32 @@
 @code {
     private bool _syncing;
 
+    protected override void OnInitialized()
+    {
+        // The handler raises SignedOut from a background thread on a 401, so the layout has
+        // to re-render itself rather than waiting for a user interaction that may never come.
+        AuthState.SignedIn += OnAuthenticationChanged;
+        AuthState.SignedOut += OnAuthenticationChanged;
+    }
+
+    private void OnAuthenticationChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task SignOutAsync()
+    {
+        await Auth.SignOutAsync();
+        Navigation.NavigateTo("/login");
+    }
+
     private async Task SyncAsync()
     {
+        // Sync is the one action that genuinely needs a token. Rather than letting the request
+        // fail with a 401 the user cannot act on, send them where they can fix it.
+        if (!AuthState.IsAuthenticated)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
         _syncing = true;
 
         try
@@ -55,5 +107,13 @@
         {
             _syncing = false;
         }
+    }
+
+    public void Dispose()
+    {
+        // AuthenticationState is a singleton and outlives this layout, so an un-removed
+        // handler would keep it alive and render into a dead context.
+        AuthState.SignedIn -= OnAuthenticationChanged;
+        AuthState.SignedOut -= OnAuthenticationChanged;
     }
 }
