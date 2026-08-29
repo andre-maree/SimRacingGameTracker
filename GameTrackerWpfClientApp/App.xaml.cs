@@ -2,6 +2,8 @@
 using System.IO;
 using System.Windows;
 using GameTrackerWpfClientApp.Data;
+using GameTracker.Telemetry.Abstractions;
+using GameTracker.Telemetry.R3E;
 using GameTrackerRazorLibrary.Catalogue;
 using GameTrackerWpfClientApp.Services;
 using GameTrackerWpfClientApp.Services.Authentication;
@@ -133,6 +135,11 @@ namespace GameTrackerWpfClientApp
             // Singleton so the concurrency guard is genuinely application-wide; it opens
             // its own scoped DbContext per batch rather than capturing one.
             services.AddSingleton<CatalogueSyncService>();
+
+            // Singleton and non-lazy: it owns the memory-mapped handle, and a second
+            // instance would open a redundant view of the same region.
+            services.AddSingleton<SharedMemoryTelemetrySource>();
+            services.AddSingleton<ITelemetrySource>(sp => sp.GetRequiredService<SharedMemoryTelemetrySource>());
 
             // Radzen dialog/notification/tooltip/context-menu services: the desktop
             // equivalent of AddRadzenComponents() on the server.

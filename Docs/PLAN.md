@@ -226,11 +226,18 @@ This is the living implementation checklist for the GameTracker technical test. 
 - Header gained a sync button, disabled while running so a second click visibly does nothing rather than silently hitting the service's overlap guard
 - `System.Linq.Dynamic.Core` added to the client so Radzen's filter/sort expressions execute in SQLite instead of in memory
 
-### ⏳ Step 26: Implement version gate and SharedMemoryTelemetrySource
-- Validate (major, minor) from step 6
-- Page-tolerant size check
-- Log Error and refuse start on mismatch
-- 60 Hz poll with 1s reconnect retry
+### ✅ Step 26: Implement version gate and SharedMemoryTelemetrySource
+- `SharedMemoryVersionGate` validates `(3, 5)` from the step 6 spike, sourced from `Constant.VersionMajor/VersionMinor` rather than re-typed literals
+- The gate exists because the failure it prevents is **silent**: `Marshal.PtrToStructure` succeeds against *any* bytes, so a changed layout yields plausible-but-wrong lap times rather than an exception. No data beats corrupt data that gets uploaded and trusted
+- Major mismatch → reject (layout restructured, no offset is trustworthy). Minor *lower* → reject (game predates fields we read). Minor *higher* → accept with a log note, since R3E appends fields and our prefix still reads correctly
+- Size check is **page-tolerant**, never equality: Windows rounds the view up to a 4 KiB page, exactly as the spike measured (43,996-byte struct in a 45,056-byte view = 1,060 bytes of padding). Rejects only when the view is smaller than the struct, or has ≥ one full page of slack
+- `SharedMemoryTelemetrySource` implements `ITelemetrySource` with a **60 Hz** poll — matched to the game's update rate, since faster only re-reads identical bytes and slower risks missing the frame a lap rolls over
+- **1s** reconnect retry while disconnected: the region only exists during a session, so "not connected" is the normal idle state and a 60 Hz spin on `OpenExisting` would burn CPU for nothing
+- Endless stream by design: it pauses and resumes rather than terminating, so consumers need no restart logic of their own
+- Version failure logs at **Error** once and latches `_incompatibleReported`, avoiding 60 identical fatal messages per second; disconnecting on rejection means switching to a compatible build re-runs the gate cleanly
+- Mapping funnels every value through `R3EValue` so the `-1` sentinel cannot become a real reading, with two deliberate exceptions: `Gear` uses `-2` for unavailable (`-1` is reverse), and `InPitLane` defaults to false so a missing reading keeps a stint open instead of inventing a pit stop
+- Uses `ThrottleRaw`/`BrakeRaw`/`SteerInputRaw` — a driver input trace wants the inputs before assists
+- Registered as a singleton in the WPF host because it owns the memory-mapped handle
 
 ### ⏳ Step 27: Implement SessionStateMachine
 - Monotonic-time restart guard
