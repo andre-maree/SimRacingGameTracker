@@ -166,8 +166,10 @@ GameTrackerSolution/
 ├── GameTrackerRazorLibrary/             # Shared Razor components
 ├── GameTrackerTestingConsoleApp/        # Throwaway spike console (used in step 2/6 of plan)
 ├── TODO.md                              # Deferred work and known technical debt
+├── TESTPLAN.md                         # Clean-machine verification walkthrough
 └── Docs/
 	├── PLAN.md                          # Living implementation checklist
+	├── AZURE DEPLOYMENT.md              # JWT signing key and Key Vault setup
 	└── CHOICES AND REASONS.md           # Architecture decisions and justifications
 ```
 
@@ -188,8 +190,8 @@ deliberately skips creation rather than falling back to a guessable default.
 
 ### Authentication
 - `POST /api/auth/login` — returns a 24-hour JWT (body: `{ "email": "...", "password": "..." }`)
-- `POST /register` — Identity default (via `MapIdentityApi`)
-- `POST /logout` — Identity default
+- `POST /identity/register` — Identity default (via `MapIdentityApi`, mapped under the `/identity` group)
+- `POST /identity/login` — Identity default (bearer-token scheme; the WPF client uses `/api/auth/login` instead)
 
 The login endpoint returns an undifferentiated `401` for both an unknown account and a bad
 password (account enumeration would otherwise be trivial), and `423` when Identity has locked
