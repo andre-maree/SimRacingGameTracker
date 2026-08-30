@@ -10,6 +10,7 @@ using GameTrackerRazorLibrary.Catalogue;
 using GameTrackerWpfClientApp.Services;
 using GameTrackerWpfClientApp.Services.Authentication;
 using GameTrackerWpfClientApp.Services.Catalogue;
+using GameTrackerWpfClientApp.Services.Connectivity;
 using GameTrackerWpfClientApp.Services.Logging;
 using GameTrackerWpfClientApp.Services.Recording;
 using GameTrackerWpfClientApp.Services.Sync;
@@ -155,6 +156,11 @@ namespace GameTrackerWpfClientApp
             // otherwise a 401 on the sync worker would leave the UI believing it is still
             // signed in.
             services.AddSingleton<AuthenticationState>();
+
+            // Singleton for the same reason as the sign-in state: a failure observed by the
+            // upload worker must spare the UI from repeating the same connect timeout.
+            services.AddSingleton<ConnectivityState>();
+
             services.AddTransient<AuthenticationHandler>();
 
             // Configuration-driven so a test or self-hosted deployment can be pointed

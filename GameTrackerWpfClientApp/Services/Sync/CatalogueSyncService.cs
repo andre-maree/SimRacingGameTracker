@@ -1,6 +1,7 @@
 using GameTracker.Domain.Dtos;
 using GameTracker.Domain.Entities;
 using GameTrackerWpfClientApp.Data;
+using GameTrackerWpfClientApp.Services.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -11,9 +12,23 @@ using System.Net.Http.Json;
 namespace GameTrackerWpfClientApp.Services.Sync;
 
 /// <summary>The outcome of a sync attempt, for display and for retry decisions.</summary>
-public sealed record CatalogueSyncResult(bool Succeeded, int RowsApplied, long Cursor, string? Message)
+/// <remarks>
+/// <paramref name="Offline"/> is carried separately from <paramref name="Succeeded"/>
+/// because the two call for different handling: an unreachable server is the expected
+/// resting state of this client and needs no more than a quiet indicator, whereas a real
+/// failure warrants a warning the user can act on.
+/// </remarks>
+public sealed record CatalogueSyncResult(
+    bool Succeeded,
+    int RowsApplied,
+    long Cursor,
+    string? Message,
+    bool Offline = false)
 {
     public static CatalogueSyncResult Skipped(string message) => new(false, 0, 0, message);
+
+    public static CatalogueSyncResult OfflineResult(long cursor, int rowsApplied) =>
+        new(false, rowsApplied, cursor, "The server could not be reached; working offline.", Offline: true);
 }
 
 /// <summary>
@@ -91,8 +106,10 @@ public sealed class CatalogueSyncService
         {
             // Offline is the expected state for this application, not an error worth
             // surfacing loudly: recorded laps stay queued locally until connectivity returns.
-            _logger.LogInformation(ex, "Catalogue sync could not reach the server.");
-            return new CatalogueSyncResult(false, 0, 0, "The server could not be reached.");
+            // The handler now converts transport faults into a 503, so reaching here means
+            // a response arrived and was unusable -- still not fatal, but not offline either.
+            _logger.LogWarning(ex, "Catalogue sync failed against a reachable server.");
+            return new CatalogueSyncResult(false, 0, 0, "The sync request failed. See the log for details.");
         }
         finally
         {
@@ -119,6 +136,17 @@ public sealed class CatalogueSyncService
             var response = await client.GetAsync(
                 $"api/sync/changes?since={cursor}&take={PageSize}",
                 cancellationToken);
+
+            if (AuthenticationHandler.IsOffline(response))
+            {
+                // Pages already applied are kept: the cursor was committed with them, so
+                // the next run resumes from exactly here rather than starting over.
+                _logger.LogInformation(
+                    "Catalogue sync stopped at cursor {Cursor} because the server is unreachable.",
+                    cursor);
+
+                return CatalogueSyncResult.OfflineResult(cursor, totalApplied);
+            }
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
