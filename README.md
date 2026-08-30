@@ -63,17 +63,45 @@ The password must satisfy the ASP.NET Core Identity default policy (8+ character
 digit, and non-alphanumeric). The admin email defaults to `admin@gametracker.local` and can be
 overridden with `Seed:AdminEmail`.
 
-### 4. Set up the server database
+### 4. Set the JWT signing key (required)
+
+The server signs API tokens with `Jwt:Key`, and **refuses to start without it**. No key is
+committed to this repository: a leaked signing key would let anyone mint a valid Admin token.
+
+Run this once per machine. The value is stored outside the repository and persists across
+restarts, rebuilds, and branch switches, so it does not need to be set again before each run.
+
+```powershell
+cd GameTrackerBlazorServerApp
+$bytes = New-Object byte[] 64
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+dotnet user-secrets set "Jwt:Key" ([Convert]::ToBase64String($bytes))
+cd ..
+```
+
+The key must be at least 32 bytes; startup fails fast if it is shorter, because a short key can
+be brute-forced to forge tokens.
+
+> **Keep the key stable.** Every issued token is validated against it, so replacing the key
+> immediately invalidates every client session. Generate it once per environment and store it.
+
+> **In production**, supply the key through the environment or a key vault instead
+> (`Jwt__Key` — a double underscore, since `:` is not portable in environment variable names).
+> `dotnet user-secrets` is a development-only provider: it reads the developer's user profile,
+> is not part of the published output, and will silently have no effect on a server. If you run
+> more than one server instance, they must all share the same key, or a token issued by one is
+> rejected by another.
+
+### 5. Set up the server database
 
 No manual migration step is required. The server calls `DbSeeder.SeedAsync` at startup, which
-migrates the database and then seeds it. Simply running the server (step 6) will:
+migrates the database and then seeds it. Simply running the server (step 7) will:
 
 - Create the SQL Server database (connection string in `appsettings.json`)
 - Run migrations (schema + audit triggers)
 - Seed the catalogue from `Data/r3e-data.json`
 - Create `Admin` and `User` roles
 - Create the admin account using the password you set in step 3
-
 If you prefer to apply migrations ahead of time, you can still run:
 
 ```powershell
@@ -84,7 +112,7 @@ cd ..
 
 Note that this applies **schema only** — seeding happens at application startup, not here.
 
-### 5. Set up the client database
+### 6. Set up the client database
 The WPF client database is created automatically on first launch under:
 ```
 %LOCALAPPDATA%\GameTracker\gametracker.db
@@ -92,7 +120,7 @@ The WPF client database is created automatically on first launch under:
 
 No manual migration step is required.
 
-### 6. Run the Blazor Server app
+### 7. Run the Blazor Server app
 ```powershell
 cd GameTrackerBlazorServerApp
 dotnet run
@@ -106,7 +134,7 @@ from step 3.
 > `GameTrackerWpfClientApp/appsettings.json`. If you change the server's port, change that value
 > too or the client will fail to sync.
 
-### 7. Run the WPF Client app
+### 8. Run the WPF Client app
 ```powershell
 cd GameTrackerWpfClientApp
 dotnet run
@@ -117,7 +145,7 @@ On first launch:
 2. The client will sync the catalogue (Games/Cars/Tracks) into local SQLite
 3. The client is now usable offline
 
-### 8. Record telemetry (optional)
+### 9. Record telemetry (optional)
 1. Launch RaceRoom Racing Experience
 2. Enter a practice session with any car/track
 3. Leave the WPF client running in the background
@@ -308,6 +336,17 @@ These are deliberate trade-offs or stretch goals beyond the brief's scope. See `
 - Check the JWT token in `%LOCALAPPDATA%\GameTracker\token.dat` — it may have expired (24-hour TTL)
 - Check the server API is reachable (default: `https://localhost:7157`)
 - Check the server logs for authentication failures
+- The client log (`%LOCALAPPDATA%\GameTracker\logs\`) reports
+  `Telemetry upload is paused because the session is not signed in` when the token has lapsed.
+  Recorded laps stay queued locally and upload once you sign in again — nothing is lost.
+
+### The server exits at startup with "Jwt:Key is not configured"
+- The signing key has not been set on this machine; see step 4 of the setup instructions
+- In production the key comes from the environment or a key vault as `Jwt__Key`, not user-secrets
+
+### Every client was logged out after a server restart or deployment
+- The `Jwt:Key` in use changed, which invalidates every previously issued token
+- Confirm the key is stored durably and is identical across all server instances
 
 ---
 

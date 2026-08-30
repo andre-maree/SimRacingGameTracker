@@ -31,16 +31,26 @@ var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<Jw
 
 if (string.IsNullOrWhiteSpace(jwtOptions.Key))
 {
-    if (!builder.Environment.IsDevelopment())
-    {
-        // Never fall back to a generated key outside development: tokens would be
-        // invalidated on every restart and, worse, the failure would be silent.
-        throw new InvalidOperationException("Jwt:Key is not configured. Set it via environment or key vault.");
-    }
+    // Fails in every environment, development included. A key generated per startup
+    // silently invalidates every token the previous process issued, which presents as
+    // clients that were working a moment ago being logged out for no visible reason -
+    // and no refresh-token scheme can survive it either, because the key that signed
+    // the refresh token is gone too.
+    //
+    // Development sets this once via:
+    //   dotnet user-secrets set "Jwt:Key" "<base64 of 64 random bytes>"
+    throw new InvalidOperationException(
+        "Jwt:Key is not configured. Set it with 'dotnet user-secrets set \"Jwt:Key\" <key>' " +
+        "in development, or via the environment or key vault elsewhere.");
+}
 
-    // Development convenience only. The key stays out of appsettings.json by design.
-    jwtOptions.Key = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
-    builder.Services.PostConfigure<JwtOptions>(options => options.Key = jwtOptions.Key);
+// A short key would let an attacker brute-force the signature and mint their own Admin
+// token, so the weak-key case is refused rather than merely discouraged. HMAC-SHA256
+// requires at least as much key material as its 256-bit output.
+if (Encoding.UTF8.GetByteCount(jwtOptions.Key) < 32)
+{
+    throw new InvalidOperationException(
+        "Jwt:Key is too short: HMAC-SHA256 signing requires at least 32 bytes of key material.");
 }
 
 builder.Services.AddScoped<JwtTokenService>();
