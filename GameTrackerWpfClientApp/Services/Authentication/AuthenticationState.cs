@@ -45,6 +45,12 @@ public sealed class AuthenticationState
         {
             // Do not keep a token we already know the server will reject.
             await _tokenStore.ClearAsync(cancellationToken);
+
+            // Announced, not just discarded: an expired token is indistinguishable from a
+            // sign-out as far as the rest of the application is concerned, and staying
+            // silent here leaves the shell showing a signed-in chrome that no request can
+            // actually satisfy.
+            SignedOut?.Invoke();
             return;
         }
 

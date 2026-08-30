@@ -44,6 +44,12 @@ public sealed record TelemetryFrame
     /// </summary>
     public bool GameInReplay { get; init; }
 
+    /// <summary>
+    /// True while the player is sitting in the garage. Recording waits for this to clear:
+    /// the garage precedes the green flag and is not driving.
+    /// </summary>
+    public bool GamePlayerInGarage { get; init; }
+
     public required SessionType SessionType { get; init; }
 
     /// <summary>Raw R3E session phase; null when unavailable.</summary>

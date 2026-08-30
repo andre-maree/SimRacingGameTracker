@@ -135,6 +135,7 @@ public sealed class SharedMemoryTelemetrySource : ITelemetrySource, IDisposable
         GameInMenus = R3EValue.ToFlag(shared.GameInMenus),
         GamePaused = R3EValue.ToFlag(shared.GamePaused),
         GameInReplay = R3EValue.ToFlag(shared.GameInReplay),
+        GamePlayerInGarage = R3EValue.ToFlag(shared.GamePlayerInGarage),
         SessionType = MapSessionType(shared.SessionType),
         SessionPhase = R3EValue.ToNullable(shared.SessionPhase),
 

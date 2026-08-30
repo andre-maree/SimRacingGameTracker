@@ -32,6 +32,12 @@ public sealed class SessionStateMachine
     /// </summary>
     private const int CheckeredPhase = 6;
 
+    /// <summary>
+    /// R3E <c>SessionPhase.Green</c>. The flag has dropped and the first racing lap has
+    /// begun; every lower phase (garage, gridwalk, formation, countdown) precedes it.
+    /// </summary>
+    private const int GreenPhase = 5;
+
     private Guid? _sessionId;
     private Guid? _stintId;
     private SessionType _sessionType;
@@ -68,6 +74,11 @@ public sealed class SessionStateMachine
     /// </remarks>
     private bool _sawCheckeredFlag;
 
+    /// <summary>
+    /// The phase seen on the previous frame, used to detect the green flag dropping.
+    /// </summary>
+    private int? _lastSessionPhase;
+
     /// <summary>True while a session is open and frames are being recorded.</summary>
     public bool IsRecording => _sessionId is not null;
 
@@ -90,6 +101,14 @@ public sealed class SessionStateMachine
     public IReadOnlyList<RecordingEvent> Process(TelemetryFrame frame)
     {
         var events = new List<RecordingEvent>();
+
+        // Latched before any early return below. The frame that drops the player into the
+        // results screen is frequently the very first frame to report the flag, and a latch
+        // set further down would never see it.
+        if (frame.SessionPhase == CheckeredPhase)
+        {
+            _sawCheckeredFlag = true;
+        }
 
         // Menus are the normal way a session ends: the player quits to the garage. Any lap
         // in progress is genuinely incomplete and must be discarded, not saved short.
@@ -120,6 +139,13 @@ public sealed class SessionStateMachine
 
         if (_sessionId is null)
         {
+            // The garage precedes the green flag, so opening a session there would date the
+            // session minutes before the driver takes control and open a stint nobody drives.
+            if (frame.GamePlayerInGarage)
+            {
+                return events;
+            }
+
             StartSession(events, frame, carId, trackId);
             return events;
         }
@@ -151,10 +177,7 @@ public sealed class SessionStateMachine
 
         _lastSimulationTime = frame.GameSimulationTime;
 
-        if (frame.SessionPhase == CheckeredPhase)
-        {
-            _sawCheckeredFlag = true;
-        }
+        ProcessGreenFlag(frame);
 
         ProcessPitTransitions(events, frame);
         ProcessLapCompletion(events, frame);
@@ -197,6 +220,7 @@ public sealed class SessionStateMachine
         _lastCompletedLaps = frame.CompletedLaps ?? 0;
 
         _sawCheckeredFlag = frame.SessionPhase == CheckeredPhase;
+        _lastSessionPhase = frame.SessionPhase;
 
         _stintNumber = 0;
         _inPitLane = frame.InPitLane;
@@ -208,11 +232,23 @@ public sealed class SessionStateMachine
             carId,
             trackId));
 
-        StartStint(events, frame.CapturedAtUtc, outLap: frame.InPitLane);
+        // A stint is a period of on-track running, so none is opened while the car is still
+        // in the pit lane or garage: pit exit opens the first one. Opening one here as well
+        // would number the driver's first real stint 2, and leave stint 1 open forever with
+        // no laps ever attached to it.
+        if (!frame.InPitLane)
+        {
+            StartStint(events, frame.CapturedAtUtc, outLap: false);
+        }
     }
 
     private void StartStint(List<RecordingEvent> events, DateTime occurredAtUtc, bool outLap)
     {
+        // Closing first keeps StintStarted and StintEnded paired. Pit exit would otherwise
+        // start a second stint over the top of an open one, orphaning it with a null end
+        // time and silently shifting every subsequent stint number.
+        EndStint(events, occurredAtUtc);
+
         _stintNumber++;
         _stintId = Guid.NewGuid();
 
@@ -228,6 +264,41 @@ public sealed class SessionStateMachine
             _stintNumber,
             outLap));
     }
+
+    /// <summary>
+    /// Resets the lap state when the green flag drops.
+    /// </summary>
+    /// <remarks>
+    /// The grid is not part of a lap. RaceRoom still reports lap validity and pit state
+    /// while the car sits there, and without this reset the opening lap of a race inherits
+    /// whatever those fields happened to say during the countdown.
+    /// </remarks>
+    private void ProcessGreenFlag(TelemetryFrame frame)
+    {
+        if (frame.SessionPhase is not { } phase)
+        {
+            return;
+        }
+
+        var previousPhase = _lastSessionPhase;
+        _lastSessionPhase = phase;
+
+        if (phase == GreenPhase && previousPhase is { } previous && previous < GreenPhase)
+        {
+            _currentLapValid = true;
+            _currentLapTouchedPits = _inPitLane;
+        }
+    }
+
+    /// <summary>
+    /// True when a lap is genuinely being driven, so that per-lap readings describe it.
+    /// </summary>
+    /// <remarks>
+    /// An unavailable phase is treated as racing: sessions without a phase (practice on
+    /// some builds) would otherwise never latch a cut at all, which is the worse failure.
+    /// </remarks>
+    private static bool IsLapUnderWay(int? sessionPhase)
+        => sessionPhase is not { } phase || phase == GreenPhase;
 
     private void ProcessPitTransitions(List<RecordingEvent> events, TelemetryFrame frame)
     {
@@ -263,7 +334,11 @@ public sealed class SessionStateMachine
     {
         // Validity is latched: once the game says the lap is invalid, it stays invalid even
         // if the flag clears before the line.
-        if (frame.CurrentLapValid is false)
+        //
+        // Only while a lap is actually under way. RaceRoom reports the lap as invalid on the
+        // grid and again once the flag has fallen, neither of which describes a lap being
+        // driven; latching those would condemn the opening and closing laps of every race.
+        if (frame.CurrentLapValid is false && IsLapUnderWay(frame.SessionPhase))
         {
             _currentLapValid = false;
         }
@@ -318,7 +393,20 @@ public sealed class SessionStateMachine
     }
 
     private void CloseSession(List<RecordingEvent> events, TelemetryFrame frame, SessionEndReason reason)
-        => CloseSession(events, frame.CapturedAtUtc, frame.CompletedLaps ?? _lastCompletedLaps, reason);
+    {
+        if (_sessionId is null)
+        {
+            return;
+        }
+
+        // The chequered flag and the results screen arrive together: RaceRoom raises the
+        // menu flag on the very same frame that increments the lap counter. Harvesting the
+        // lap before closing is what stops the finishing lap of every race - and the only
+        // lap of a one-lap race - from being written off as an incomplete lap.
+        ProcessLapCompletion(events, frame);
+
+        CloseSession(events, frame.CapturedAtUtc, frame.CompletedLaps ?? _lastCompletedLaps, reason);
+    }
 
     private void CloseSession(
         List<RecordingEvent> events,
@@ -334,7 +422,10 @@ public sealed class SessionStateMachine
         // A lap was under way when the session ended. It is reported as discarded rather
         // than saved with a guessed time: a truncated lap looks like a real one in a
         // results table, which is worse than an explicit gap.
-        if (_stintId is not null && HasLapInProgress(completedLaps))
+        //
+        // Not after the chequered flag, where the race is over and the few metres past the
+        // line are not the start of another lap.
+        if (_stintId is not null && !_sawCheckeredFlag && HasLapInProgress(completedLaps))
         {
             events.Add(new PartialLapDiscarded(occurredAtUtc, _stintId.Value, completedLaps + 1));
         }
@@ -352,6 +443,7 @@ public sealed class SessionStateMachine
         _currentLapTouchedPits = false;
         _inPitLane = false;
         _sawCheckeredFlag = false;
+        _lastSessionPhase = null;
     }
 
     /// <summary>
