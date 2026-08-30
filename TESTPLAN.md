@@ -89,14 +89,25 @@ development machine. Every value below was read from source, not assumed:
 
 ---
 
-## Phase 2 — Configure the admin password **[CRITICAL]**
+## Phase 2 — Configure the signing key and admin password **[CRITICAL]**
+
+The server **refuses to start** without `Jwt:Key`, so set it first:
+
+```powershell
+cd GameTrackerBlazorServerApp
+$bytes = New-Object byte[] 64
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+dotnet user-secrets set "Jwt:Key" ([Convert]::ToBase64String($bytes))
+```
+
+Startup also fails if the key is shorter than 32 bytes. Keep the value stable: replacing it
+invalidates every token already issued to a client.
 
 No credential is committed to the repository. The seeder **silently skips** admin creation when
 no password is configured — so if you skip this step, the app will start normally and you will
 only discover the problem when login fails with a 401.
 
 ```powershell
-cd GameTrackerBlazorServerApp
 dotnet user-secrets set "Seed:AdminPassword" "Test123!Pass"
 ```
 
@@ -106,6 +117,7 @@ non-alphanumeric). The example above does.
 Optionally override the email (otherwise `admin@gametracker.local` is used):
 ```powershell
 dotnet user-secrets set "Seed:AdminEmail" "admin@gametracker.local"
+cd ..
 ```
 
 ---
@@ -130,6 +142,7 @@ it is created at startup.
    | Hangs ~30s then a connection/network error | LocalDB not running | `sqllocaldb start MSSQLLocalDB` |
    | `login failed for user` | LocalDB instance owned by a different user profile | `sqllocaldb delete MSSQLLocalDB` then `sqllocaldb create MSSQLLocalDB` |
    | Starts but login later 401s | `Seed:AdminPassword` not set before **first** run | See "Re-seeding" below |
+   | Exits immediately with `Jwt:Key is not configured` | Signing key secret not set | Repeat Phase 2 |
 
 3. Confirm the database was created:
    ```powershell

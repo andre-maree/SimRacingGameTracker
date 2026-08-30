@@ -145,7 +145,7 @@ This is the living implementation checklist for the GameTracker technical test. 
 - **Unknown email and wrong password return the identical 401** — distinguishing them would make the endpoint an account enumeration oracle. Lockout returns 423
 - `lockoutOnFailure: true` so Identity's brute-force protection covers API logins, not just the browser flow
 - `ClockSkew` cut to 30s; the 5-minute default silently extends every token's lifetime
-- `Jwt:Key` is **absent from appsettings.json** by design — user secrets/environment only. Missing key throws outside Development; in Development an ephemeral key is generated so first-run works
+- `Jwt:Key` is **absent from appsettings.json** by design — user secrets/environment only. A missing key throws in *every* environment, development included: a per-startup ephemeral key would silently sign every client out on each restart. A key shorter than 32 bytes is refused as well, since HMAC-SHA256 needs at least as much key material as its output
 
 ### ✅ Step 19: Add GET /api/sync/changes
 - `SyncController` returns Games/Cars/Tracks with `ServerVersion > since`, ordered ascending, projected straight to DTOs (no entity materialisation)
