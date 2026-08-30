@@ -91,6 +91,8 @@ be brute-forced to forge tokens.
 > is not part of the published output, and will silently have no effect on a server. If you run
 > more than one server instance, they must all share the same key, or a token issued by one is
 > rejected by another.
+>
+> See [Docs/AZURE DEPLOYMENT.md](Docs/AZURE%20DEPLOYMENT.md) for the Azure Key Vault setup.
 
 ### 5. Set up the server database
 
