@@ -17,6 +17,16 @@ This file tracks work that was deliberately deferred during the initial implemen
 - Rotate the refresh token on each use (detects token theft)
 - Add a revocation table to the server database for invalidated tokens
 
+**Prerequisite (done):** the signing key is now stable across restarts. While the key was
+regenerated on every server start, a refresh token could not have worked at all: it would have
+been validated against a key that no longer existed, failing exactly like an expired one.
+
+**Note:** the expiry is now *observable* even without this work. The client logs
+`Telemetry upload is paused because the session is not signed in` and raises `SignedOut` when a
+stored token is found expired at startup, so a lapsed session no longer strands the upload queue
+silently. That reduces the urgency of this item but does not replace it — the user still has to
+sign in again every 24 hours.
+
 **Estimated effort:** ~half a day
 
 ---
@@ -116,6 +126,41 @@ captured against stored data.
 storage (measured: 48,126 bytes vs 11,990 bytes for a 90-second lap).
 
 **Estimated effort:** ~1 hour to make the format selectable per-lap
+
+---
+
+### 7b. Role and Account Changes Are Stale Until Token Expiry
+**Issue:** Role claims are embedded in the JWT so `[Authorize(Roles = ...)]` resolves without a
+database hit per request. The trade-off is that revoking a role, or disabling an account, has no
+effect until the token expires — up to 24 hours later. There is no revocation list, so a token
+that has been issued cannot be withdrawn.
+
+**Impact:** Acceptable for a single-operator desktop client, but it means "remove admin rights"
+is not an immediate operation. The only current way to invalidate outstanding tokens is to change
+`Jwt:Key`, which signs *every* client out.
+
+**If addressed:** the natural place to re-check the database is at refresh time (see item 1),
+which bounds staleness to the access-token lifetime rather than the full session. Immediate
+revocation would need a `jti` deny-list checked per request.
+
+**Estimated effort:** ~2 hours alongside item 1
+
+---
+
+### 7c. Only One Signing Key Is Trusted at a Time
+**Issue:** `TokenValidationParameters.IssuerSigningKey` accepts a single key, so rotating
+`Jwt:Key` immediately invalidates every outstanding token and forces all clients to sign in
+again. There is no overlap window.
+
+**Impact:** Key rotation is a breaking operation that has to be scheduled rather than performed
+routinely. This also means a multi-instance deployment must share one key exactly — see
+[Docs/AZURE DEPLOYMENT.md](Docs/AZURE%20DEPLOYMENT.md).
+
+**If addressed:** switch to `IssuerSigningKeys` (plural) and accept a small set of keys, signing
+with the newest while still validating the previous one. That allows a rotation window in which
+both old and new tokens are honoured.
+
+**Estimated effort:** ~2 hours
 
 ---
 
