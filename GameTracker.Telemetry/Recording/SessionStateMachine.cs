@@ -132,8 +132,18 @@ public sealed class SessionStateMachine
 
         // Without both ids the frame cannot be attributed to a car and track, so there is
         // nothing meaningful to record against.
+        //
+        // Losing the ids while a session is open is how exiting to the menus actually looks
+        // on many frames: RaceRoom blanks the car, track and menu flags to the -1
+        // "unavailable" sentinel, so GameInMenus above reads false and the quit would go
+        // unnoticed - leaving the session open and the UI stuck on 'Recording'.
         if (frame.CarExternalId is not { } carId || frame.TrackExternalId is not { } trackId)
         {
+            CloseSession(
+                events,
+                frame,
+                _sawCheckeredFlag ? SessionEndReason.Completed : SessionEndReason.Abandoned);
+
             return events;
         }
 
