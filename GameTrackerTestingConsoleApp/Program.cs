@@ -73,6 +73,9 @@ internal static class Program
         ReportSanityFields(service);
         Console.WriteLine();
 
+        MonitorLive(service);
+        Console.WriteLine();
+
         Console.WriteLine("=========================================");
         if (versionOk && sizeOk)
         {
@@ -194,6 +197,81 @@ internal static class Program
 
     private static string Describe(int value) =>
         value == -1 ? "-1 (not available)" : value.ToString();
+
+    /// <summary>
+    /// Part D: continuously print the fields the session state machine actually decides on.
+    /// </summary>
+    /// <remarks>
+    /// The size and sanity checks only prove the layout is plausible for one instant. The
+    /// recording bugs that matter are behavioural: a session that ends as 'Abandoned' means
+    /// <c>GameInMenus</c> read as non-zero, or <c>GameSimulationTime</c> went backwards,
+    /// while the driver was still on track. Both are only visible over time, so this mode
+    /// samples at the same 60 Hz the recorder uses and prints a line whenever one of those
+    /// decision inputs changes, leaving a transcript of exactly what the game reported.
+    /// </remarks>
+    private static void MonitorLive(RaceRoomTelemetryService service)
+    {
+        Console.WriteLine("--- Part D: live decision-field monitor ---");
+        Console.WriteLine("Drive a session. A line is printed only when a decision field changes.");
+        Console.WriteLine("Press any key to stop.");
+        Console.WriteLine();
+
+        string? previous = null;
+        var lastSimTime = double.MinValue;
+
+        while (!Console.KeyAvailable)
+        {
+            var shared = service.TryReadShared();
+
+            if (shared is null)
+            {
+                // The region vanishing is itself a decision input: it is what the recorder
+                // sees as a disconnect, so it belongs in the transcript.
+                if (previous != "<disconnected>")
+                {
+                    previous = "<disconnected>";
+                    Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff}  shared memory unavailable");
+                }
+
+                Thread.Sleep(250);
+                continue;
+            }
+
+            var s = shared.Value;
+            var simTime = s.Player.GameSimulationTime;
+
+            // Mirrors SessionStateMachine's own restart rule so a spurious restart shows up
+            // here rather than only as a mangled session in the database.
+            var wentBackwards = lastSimTime > double.MinValue && simTime < lastSimTime - 0.5;
+            lastSimTime = simTime;
+
+            var line =
+                $"menus={s.GameInMenus} paused={s.GamePaused} replay={s.GameInReplay} " +
+                $"garage={s.GamePlayerInGarage} type={s.SessionType} phase={s.SessionPhase} " +
+                $"car={s.VehicleInfo.ModelId} track={s.LayoutId} laps={s.CompletedLaps} " +
+                $"pit={s.InPitlane} valid={s.CurrentLapValid}";
+
+            if (line != previous || wentBackwards)
+            {
+                previous = line;
+                Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff}  sim={simTime,10:F3}  {line}");
+
+                if (wentBackwards)
+                {
+                    WriteFailure("    ^ simulation time went BACKWARDS - the recorder reads this as a restart.");
+                }
+            }
+
+            // 60 Hz, matching SharedMemoryTelemetrySource so the transcript reflects the
+            // same sampling the recorder sees.
+            Thread.Sleep(16);
+        }
+
+        Console.ReadKey(intercept: true);
+        Console.WriteLine();
+        Console.WriteLine("  menus/paused/replay/garage of 1 while on track explains an 'Abandoned' session.");
+        Console.WriteLine("  A -1 in any of them means the field is unavailable, not that it is false.");
+    }
 
     private static string Describe(double value) =>
         value < 0 ? $"{value:F3} (not available)" : value.ToString("F3");

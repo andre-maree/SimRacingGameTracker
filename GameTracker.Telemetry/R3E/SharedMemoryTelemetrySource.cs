@@ -131,8 +131,11 @@ public sealed class SharedMemoryTelemetrySource : ITelemetrySource, IDisposable
     private static TelemetryFrame Map(Shared shared) => new()
     {
         CapturedAtUtc = DateTime.UtcNow,
-        GameSimulationTime = shared.Player.GameSimulationTime,
+        GameSimulationTime = R3EValue.ToNullable(shared.Player.GameSimulationTime),
         GameInMenus = R3EValue.ToFlag(shared.GameInMenus),
+        GamePaused = R3EValue.ToFlag(shared.GamePaused),
+        GameInReplay = R3EValue.ToFlag(shared.GameInReplay),
+        GamePlayerInGarage = R3EValue.ToFlag(shared.GamePlayerInGarage),
         SessionType = MapSessionType(shared.SessionType),
         SessionPhase = R3EValue.ToNullable(shared.SessionPhase),
 

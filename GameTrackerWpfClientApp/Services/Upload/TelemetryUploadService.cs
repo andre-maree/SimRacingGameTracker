@@ -56,6 +56,12 @@ public sealed class TelemetryUploadService : BackgroundService
 
     private TimeSpan _backoff = InitialBackoff;
 
+    /// <summary>
+    /// Whether the previous cycle was skipped for want of a sign-in, so that the pause is
+    /// reported once rather than on every poll.
+    /// </summary>
+    private bool _pausedForSignIn;
+
     public TelemetryUploadService(
         IHttpClientFactory httpClientFactory,
         IServiceScopeFactory scopeFactory,
@@ -83,6 +89,12 @@ public sealed class TelemetryUploadService : BackgroundService
                 // 401 would only burn the backoff window and spam the log.
                 if (_authenticationState.IsAuthenticated)
                 {
+                    if (_pausedForSignIn)
+                    {
+                        _pausedForSignIn = false;
+                        _logger.LogInformation("Sign-in restored; resuming telemetry upload.");
+                    }
+
                     var succeeded = await DrainAsync(stoppingToken);
 
                     if (succeeded)
@@ -94,6 +106,20 @@ public sealed class TelemetryUploadService : BackgroundService
                         delay = _backoff;
                         _backoff = Min(_backoff * 2, MaxBackoff);
                     }
+                }
+                else if (!_pausedForSignIn)
+                {
+                    // Reported once on the transition. A token that lapses while the app is
+                    // running otherwise strands the queue in perfect silence: laps keep
+                    // recording, the grid keeps saying "queued", and nothing anywhere says
+                    // that uploading has stopped or why.
+                    _pausedForSignIn = true;
+                    PendingCount = await CountPendingAsync(stoppingToken);
+
+                    _logger.LogWarning(
+                        "Telemetry upload is paused because the session is not signed in; " +
+                        "{PendingCount} lap(s) are queued and will be sent after the next sign-in.",
+                        PendingCount);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -292,6 +318,28 @@ public sealed class TelemetryUploadService : BackgroundService
         _logger.Log(level, "Server rejected {Operation} with {Status}: {Body}", operation, response.StatusCode, body);
 
         return false;
+    }
+
+    /// <summary>
+    /// Counts the queued laps without attempting to send them, for status reporting while
+    /// upload is paused.
+    /// </summary>
+    private async Task<int> CountPendingAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<ClientDbContext>();
+
+            return await context.LocalTelemetry
+                .CountAsync(r => r.UploadedAtUtc == null, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Status reporting must never be the thing that breaks the uploader.
+            _logger.LogDebug(ex, "Could not count queued laps while upload is paused.");
+            return PendingCount;
+        }
     }
 
     private static TimeSpan Min(TimeSpan left, TimeSpan right) => left < right ? left : right;

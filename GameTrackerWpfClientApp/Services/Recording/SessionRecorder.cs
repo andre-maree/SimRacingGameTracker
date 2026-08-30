@@ -80,6 +80,9 @@ public sealed class SessionRecorder : BackgroundService
     private string? _lastLapDescription;
     private DateTime _lastNotifiedUtc = DateTime.MinValue;
 
+    /// <summary>Last lap count logged, so the diagnostic fires on change rather than per frame.</summary>
+    private int? _lastLoggedCompletedLaps = int.MinValue;
+
     public SessionRecorder(
         ITelemetrySource telemetrySource,
         IDbContextFactory<ClientDbContext> contextFactory,
@@ -159,7 +162,73 @@ public sealed class SessionRecorder : BackgroundService
 
     private async Task ProcessFrameAsync(TelemetryFrame frame, CancellationToken cancellationToken)
     {
+        var anchorBefore = _stateMachine.LastCompletedLaps;
+        var hadSession = _stateMachine.IsRecording;
+
         var events = _stateMachine.Process(frame);
+
+        // The lap counter is the sole input to lap detection, so every change in it is
+        // logged alongside whether a lap was actually emitted. A lap that the game counted
+        // but the recorder did not is otherwise invisible until the results are read back.
+        if (frame.CompletedLaps != _lastLoggedCompletedLaps)
+        {
+            _lastLoggedCompletedLaps = frame.CompletedLaps;
+
+            _logger.LogInformation(
+                "Lap counter now {Reported} (recorder anchor was {Before}, now {After}); " +
+                "emitted {LapEvents} lap event(s), {Discarded} discarded. " +
+                "Phase={Phase} InPitLane={InPitLane} SimTime={SimTime} Recording={Recording}.",
+                frame.CompletedLaps,
+                anchorBefore,
+                _stateMachine.LastCompletedLaps,
+                events.OfType<LapCompleted>().Count(),
+                events.OfType<PartialLapDiscarded>().Count(),
+                frame.SessionPhase,
+                frame.InPitLane,
+                frame.GameSimulationTime,
+                hadSession);
+        }
+
+        // The anchor chosen when a session opens decides which laps are considered already
+        // driven. If it is set above zero at the start of a race, the opening lap can never
+        // be emitted, so the value and the frame it came from are recorded verbatim.
+        foreach (var started in events.OfType<SessionStarted>())
+        {
+            _logger.LogInformation(
+                "Session {SessionId} started: anchored lap counter at {Anchor} from game value " +
+                "{Reported}. Phase={Phase} InPitLane={InPitLane} LapDistance={LapDistance} " +
+                "SimTime={SimTime} SessionType={SessionType}.",
+                started.SessionId,
+                _stateMachine.LastCompletedLaps,
+                frame.CompletedLaps,
+                frame.SessionPhase,
+                frame.InPitLane,
+                frame.LapDistanceFraction,
+                frame.GameSimulationTime,
+                frame.SessionType);
+        }
+
+        // A session ending is inferred, never announced by the game, so the frame that
+        // triggered it is logged in full. Without this the only visible symptom of a
+        // misread shared-memory field is a session that mysteriously reads 'Abandoned'.
+        foreach (var ended in events.OfType<SessionEnded>())
+        {
+            _logger.LogInformation(
+                "Session {SessionId} ended: {Reason}. Frame: InMenus={InMenus} SimTime={SimTime:F3} " +
+                "SessionType={SessionType} SessionPhase={SessionPhase} CarId={CarId} TrackId={TrackId} " +
+                "CompletedLaps={CompletedLaps} LapDistance={LapDistance} InPitLane={InPitLane}.",
+                ended.SessionId,
+                ended.Reason,
+                frame.GameInMenus,
+                frame.GameSimulationTime,
+                frame.SessionType,
+                frame.SessionPhase,
+                frame.CarExternalId,
+                frame.TrackExternalId,
+                frame.CompletedLaps,
+                frame.LapDistanceFraction,
+                frame.InPitLane);
+        }
 
         // Inputs are buffered only while a stint is genuinely open, so menu and garage
         // frames never leak into a lap's trace.
