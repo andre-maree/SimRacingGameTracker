@@ -11,6 +11,11 @@ using Microsoft.EntityFrameworkCore;
 namespace GameTrackerWpfClientApp.Services.Recording;
 
 /// <summary>A recorded session as shown in the sessions grid.</summary>
+/// <remarks>
+/// The upload counts are kept as two numbers rather than one "is uploaded" flag: a session
+/// with nothing queued has not necessarily been uploaded, it may simply have nothing to
+/// send, and collapsing the two states let an entirely unsent session claim otherwise.
+/// </remarks>
 public sealed record RecordedSessionRow(
     Guid Id,
     SessionType SessionType,
@@ -22,7 +27,8 @@ public sealed record RecordedSessionRow(
     int LapCount,
     int ValidLapCount,
     double? BestLapTime,
-    int PendingUploadCount);
+    int PendingUploadCount,
+    int UploadedCount);
 
 /// <summary>A lap as shown in the detail grid, already flattened across stints.</summary>
 public sealed record RecordedLapRow(
@@ -90,12 +96,18 @@ public sealed class RecordedSessionReader
             })
             .ToListAsync(cancellationToken);
 
-        var pendingBySession = await context.LocalTelemetry
+        // Both counts come from one grouping: a second query would be a second round trip
+        // for a number the first one already had in hand.
+        var uploadStateBySession = await context.LocalTelemetry
             .AsNoTracking()
-            .Where(r => r.UploadedAtUtc == null)
             .GroupBy(r => r.SessionId)
-            .Select(g => new { SessionId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(g => g.SessionId, g => g.Count, cancellationToken);
+            .Select(g => new
+            {
+                SessionId = g.Key,
+                Pending = g.Count(r => r.UploadedAtUtc == null),
+                Uploaded = g.Count(r => r.UploadedAtUtc != null)
+            })
+            .ToDictionaryAsync(g => g.SessionId, g => (g.Pending, g.Uploaded), cancellationToken);
 
         var cars = await context.Cars
             .AsNoTracking()
@@ -115,28 +127,36 @@ public sealed class RecordedSessionReader
             .GroupBy(t => (t.GameId, t.ExternalId))
             .ToDictionary(g => g.Key, g => g.First().Name);
 
-        return sessions.Select(s => new RecordedSessionRow(
-            s.Id,
-            s.SessionType,
+        return sessions.Select(s =>
+        {
+            var (pending, uploaded) = uploadStateBySession.TryGetValue(s.Id, out var counts)
+                ? counts
+                : (0, 0);
 
-            // Falls back to the raw id when the catalogue has not synced yet. Showing the
-            // id is more useful than an empty cell, and the session is still valid data.
-            carLookup.TryGetValue((s.GameId, s.CarExternalId), out var carName)
-                ? carName
-                : $"Car #{s.CarExternalId}",
-            trackLookup.TryGetValue((s.GameId, s.TrackExternalId), out var trackName)
-                ? trackName
-                : $"Track #{s.TrackExternalId}",
+            return new RecordedSessionRow(
+                s.Id,
+                s.SessionType,
 
-            // Converted to local time for display: the driver thinks in the clock on the
-            // wall, while everything is stored in UTC.
-            s.StartedAtUtc.ToLocalTime(),
-            s.EndedAtUtc?.ToLocalTime(),
-            s.EndReason,
-            s.LapCount,
-            s.ValidLapCount,
-            s.BestLapTime,
-            pendingBySession.TryGetValue(s.Id, out var pending) ? pending : 0))
+                // Falls back to the raw id when the catalogue has not synced yet. Showing the
+                // id is more useful than an empty cell, and the session is still valid data.
+                carLookup.TryGetValue((s.GameId, s.CarExternalId), out var carName)
+                    ? carName
+                    : $"Car #{s.CarExternalId}",
+                trackLookup.TryGetValue((s.GameId, s.TrackExternalId), out var trackName)
+                    ? trackName
+                    : $"Track #{s.TrackExternalId}",
+
+                // Converted to local time for display: the driver thinks in the clock on the
+                // wall, while everything is stored in UTC.
+                s.StartedAtUtc.ToLocalTime(),
+                s.EndedAtUtc?.ToLocalTime(),
+                s.EndReason,
+                s.LapCount,
+                s.ValidLapCount,
+                s.BestLapTime,
+                pending,
+                uploaded);
+        })
             .ToList();
     }
 

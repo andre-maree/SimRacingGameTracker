@@ -85,18 +85,27 @@
 
         try
         {
-            succeeded = await Auth.SignInAsync(_model.Email, _model.Password);
+            var outcome = await Auth.SignInAsync(_model.Email, _model.Password);
 
-            if (!succeeded)
+            succeeded = outcome == SignInOutcome.Succeeded;
+
+            _error = outcome switch
             {
-                _error = "Sign-in failed. Check the email and password and try again.";
-            }
+                // An unreachable server is worth distinguishing from rejected credentials,
+                // since the fix is entirely different: nothing about the password is wrong.
+                SignInOutcome.Offline =>
+                    "The GameTracker server could not be reached. Recording still works offline; " +
+                    "sign in again once the connection is back.",
+                SignInOutcome.Rejected =>
+                    "Sign-in failed. Check the email and password and try again.",
+                _ => null
+            };
         }
         catch (Exception ex)
         {
-            // An unreachable server is the common case here and is worth distinguishing
-            // from rejected credentials, since the fix is entirely different.
-            _error = $"Could not reach the server. {ex.Message}";
+            // The HTTP pipeline turns transport faults into an Offline outcome, so anything
+            // reaching here is unexpected rather than a routine loss of connectivity.
+            _error = $"Sign-in could not be completed. {ex.Message}";
             succeeded = false;
         }
         finally

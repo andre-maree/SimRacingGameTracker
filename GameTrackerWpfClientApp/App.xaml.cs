@@ -10,6 +10,7 @@ using GameTrackerRazorLibrary.Catalogue;
 using GameTrackerWpfClientApp.Services;
 using GameTrackerWpfClientApp.Services.Authentication;
 using GameTrackerWpfClientApp.Services.Catalogue;
+using GameTrackerWpfClientApp.Services.Connectivity;
 using GameTrackerWpfClientApp.Services.Logging;
 using GameTrackerWpfClientApp.Services.Recording;
 using GameTrackerWpfClientApp.Services.Sync;
@@ -92,8 +93,14 @@ namespace GameTrackerWpfClientApp
             // Bring the local store up to date before any component can query it.
             using (var scope = _host.Services.CreateScope())
             {
-                await scope.ServiceProvider.GetRequiredService<ClientDbContext>()
-                    .Database.MigrateAsync();
+                var context = scope.ServiceProvider.GetRequiredService<ClientDbContext>();
+                await context.Database.MigrateAsync();
+
+                // Runs after the migration and before the UI: a database written by an
+                // earlier build can hold laps queued against no session at all, which the
+                // sessions grid reads as "uploaded". Cheap when there is nothing to fix,
+                // since the scan is a single indexed predicate.
+                await OrphanedTelemetryRepair.RunAsync(context, logger);
             }
 
             // Restore a previously persisted token before the UI renders, so a returning
@@ -155,6 +162,11 @@ namespace GameTrackerWpfClientApp
             // otherwise a 401 on the sync worker would leave the UI believing it is still
             // signed in.
             services.AddSingleton<AuthenticationState>();
+
+            // Singleton for the same reason as the sign-in state: a failure observed by the
+            // upload worker must spare the UI from repeating the same connect timeout.
+            services.AddSingleton<ConnectivityState>();
+
             services.AddTransient<AuthenticationHandler>();
 
             // Configuration-driven so a test or self-hosted deployment can be pointed

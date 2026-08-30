@@ -260,10 +260,12 @@ public sealed class SessionRecorder : BackgroundService
         try
         {
             // Scoped to the session so every write, and any failure, is attributable to a
-            // specific outing when read back from the flat log file.
+            // specific outing when read back from the flat log file. Read from the batch
+            // rather than from the state machine, which has already cleared its session id
+            // by the time a closing batch is persisted.
             using var scope = _logger.BeginScope(new Dictionary<string, object>
             {
-                ["SessionId"] = _stateMachine.CurrentSessionId ?? Guid.Empty
+                ["SessionId"] = SessionIdOf(events) ?? _stateMachine.CurrentSessionId ?? Guid.Empty
             });
 
             await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
@@ -283,6 +285,34 @@ public sealed class SessionRecorder : BackgroundService
             // abandoning the stream would lose every remaining lap as well as this one.
             _logger.LogError(ex, "Failed to persist recording events; recording continues.");
         }
+    }
+
+    /// <summary>
+    /// The session a batch belongs to, taken from whichever event carries it.
+    /// </summary>
+    /// <remarks>
+    /// A batch is always the product of one frame and so concerns at most one session,
+    /// except for the restart case where a close and a start arrive together. The first
+    /// match is the closing session, which is the one the writes in this batch belong to.
+    /// </remarks>
+    private static Guid? SessionIdOf(IReadOnlyList<RecordingEvent> events)
+    {
+        foreach (var recordingEvent in events)
+        {
+            switch (recordingEvent)
+            {
+                case LapCompleted lap:
+                    return lap.SessionId;
+                case SessionEnded ended:
+                    return ended.SessionId;
+                case StintStarted stintStarted:
+                    return stintStarted.SessionId;
+                case SessionStarted started:
+                    return started.SessionId;
+            }
+        }
+
+        return null;
     }
 
     private async Task ApplyAsync(
@@ -440,7 +470,13 @@ public sealed class SessionRecorder : BackgroundService
             GameId = _gameId,
             CarExternalId = _carExternalId,
             TrackExternalId = _trackExternalId,
-            SessionId = _stateMachine.CurrentSessionId ?? Guid.Empty,
+
+            // Taken from the event, never from the state machine's current session. The
+            // finishing lap of every session is harvested while the session is being closed,
+            // and the machine has already cleared its session id by the time this batch is
+            // persisted: reading it here queued that lap against Guid.Empty, where the
+            // sessions grid could not find it and reported the session as fully uploaded.
+            SessionId = lap.SessionId,
             LapNumber = lap.LapNumber,
             LapTime = lap.LapTime,
             IsValid = lap.IsValid,

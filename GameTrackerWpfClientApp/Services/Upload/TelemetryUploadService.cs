@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using GameTracker.Domain.Dtos;
 using GameTrackerWpfClientApp.Data;
 using GameTrackerWpfClientApp.Services.Authentication;
+using GameTrackerWpfClientApp.Services.Connectivity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -52,6 +53,7 @@ public sealed class TelemetryUploadService : BackgroundService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AuthenticationState _authenticationState;
+    private readonly ConnectivityState _connectivityState;
     private readonly ILogger<TelemetryUploadService> _logger;
 
     private TimeSpan _backoff = InitialBackoff;
@@ -62,15 +64,23 @@ public sealed class TelemetryUploadService : BackgroundService
     /// </summary>
     private bool _pausedForSignIn;
 
+    /// <summary>
+    /// The same idea for an unreachable server, tracked separately so that recovering from
+    /// one does not silence the message about the other.
+    /// </summary>
+    private bool _pausedForOffline;
+
     public TelemetryUploadService(
         IHttpClientFactory httpClientFactory,
         IServiceScopeFactory scopeFactory,
         AuthenticationState authenticationState,
+        ConnectivityState connectivityState,
         ILogger<TelemetryUploadService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _scopeFactory = scopeFactory;
         _authenticationState = authenticationState;
+        _connectivityState = connectivityState;
         _logger = logger;
     }
 
@@ -99,6 +109,15 @@ public sealed class TelemetryUploadService : BackgroundService
 
                     if (succeeded)
                     {
+                        _backoff = InitialBackoff;
+                    }
+                    else if (!_connectivityState.IsOnline)
+                    {
+                        // An unreachable server is not a fault to back away from
+                        // exponentially: the handler already suppresses attempts during its
+                        // cooldown, so polling at that same rhythm costs nothing and keeps
+                        // recovery prompt once the server returns.
+                        delay = ConnectivityState.Cooldown;
                         _backoff = InitialBackoff;
                     }
                     else
@@ -296,8 +315,26 @@ public sealed class TelemetryUploadService : BackgroundService
     {
         if (response.IsSuccessStatusCode)
         {
+            _pausedForOffline = false;
             return true;
         }
+
+        if (AuthenticationHandler.IsOffline(response))
+        {
+            // Not a rejection: nothing reached the server, so there is no body to read and
+            // nothing about the payload to correct. Reported once per offline spell.
+            if (!_pausedForOffline)
+            {
+                _pausedForOffline = true;
+                _logger.LogInformation(
+                    "Upload paused during {Operation}: the server is unreachable. Laps stay queued locally.",
+                    operation);
+            }
+
+            return false;
+        }
+
+        _pausedForOffline = false;
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {

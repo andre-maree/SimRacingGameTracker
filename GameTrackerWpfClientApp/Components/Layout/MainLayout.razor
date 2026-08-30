@@ -1,10 +1,12 @@
 @using GameTrackerWpfClientApp.Services.Sync
 @using GameTrackerWpfClientApp.Services.Authentication
+@using GameTrackerWpfClientApp.Services.Connectivity
 @inherits LayoutComponentBase
 @implements IDisposable
 @inject CatalogueSyncService CatalogueSync
 @inject NotificationService Notifications
 @inject AuthenticationState AuthState
+@inject ConnectivityState Connectivity
 @inject AuthenticationService Auth
 @inject NavigationManager Navigation
 
@@ -30,6 +32,15 @@
                               Variant="Variant.Flat" IsBusy="@_syncing" Disabled="@_syncing"
                               Click="@SyncAsync" />
 
+                @* Reachability, kept separate from the sign-in state below: a signed-in user
+                   with no network and a signed-out user on a healthy network are different
+                   situations with different remedies, and one label cannot mean both. *@
+                @if (!Connectivity.IsOnline)
+                {
+                    <RadzenBadge Text="Offline" BadgeStyle="BadgeStyle.Warning"
+                                 title="The GameTracker server cannot be reached. Recording continues and laps are queued locally." />
+                }
+
                 @if (AuthState.IsAuthenticated)
                 {
                     @if (AuthState.IsAdmin)
@@ -44,7 +55,7 @@
                 else
                 {
                     @* Browsing works offline, so this states a fact rather than blocking. *@
-                    <RadzenText TextStyle="TextStyle.Caption" class="rz-my-0">Offline</RadzenText>
+                    <RadzenText TextStyle="TextStyle.Caption" class="rz-my-0">Signed out</RadzenText>
 
                     <RadzenButton Icon="login" Text="Sign in" Size="ButtonSize.Small"
                                   Variant="Variant.Flat"
@@ -67,6 +78,10 @@
         // to re-render itself rather than waiting for a user interaction that may never come.
         AuthState.SignedIn += OnSignedIn;
         AuthState.SignedOut += OnAuthenticationChanged;
+
+        // Connectivity flips from a background worker's thread just as a 401 does, so the
+        // indicator needs the same push rather than waiting on the next user interaction.
+        Connectivity.Changed += OnAuthenticationChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -122,15 +137,35 @@
 
         try
         {
+            // Pressing the button is an explicit instruction to try now, so any cooldown
+            // left over from a failed background attempt is cleared first.
+            Connectivity.RequestProbe();
+
             var result = await CatalogueSync.SyncAsync();
 
             Notifications.Notify(new NotificationMessage
             {
-                Severity = result.Succeeded ? NotificationSeverity.Success : NotificationSeverity.Warning,
-                Summary = result.Succeeded ? "Catalogue synced" : "Sync incomplete",
+                Severity = result.Succeeded
+                    ? NotificationSeverity.Success
+                    : result.Offline ? NotificationSeverity.Info : NotificationSeverity.Warning,
+                Summary = result.Succeeded
+                    ? "Catalogue synced"
+                    : result.Offline ? "Working offline" : "Sync incomplete",
                 Detail = result.Succeeded
                     ? $"{result.RowsApplied} row(s) updated."
                     : result.Message ?? "The sync did not complete. See the log for details.",
+                Duration = 4000
+            });
+        }
+        catch (Exception ex)
+        {
+            // The layout is the outermost component: an exception escaping here takes the
+            // whole WebView down, so a failed sync must never be allowed to become fatal.
+            Notifications.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Sync failed",
+                Detail = ex.Message,
                 Duration = 4000
             });
         }
@@ -147,5 +182,6 @@
         // handler would keep it alive and render into a dead context.
         AuthState.SignedIn -= OnSignedIn;
         AuthState.SignedOut -= OnAuthenticationChanged;
+        Connectivity.Changed -= OnAuthenticationChanged;
     }
 }
