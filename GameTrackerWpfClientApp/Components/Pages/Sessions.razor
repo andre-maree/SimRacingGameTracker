@@ -148,9 +148,15 @@
                            cannot be compared against itself. *@
                         @if (lap.HasInputTrace && lap.Id != _plottedLapId)
                         {
+                            @* stopPropagation is what makes the overlay possible: the button
+                               sits inside a selectable row, so without it the same click also
+                               raises RowSelect, which promotes this lap to primary and clears
+                               the overlay that was just set. The visible effect is the chart
+                               swapping between laps instead of drawing both. *@
                             <RadzenButton Size="ButtonSize.ExtraSmall" Variant="Variant.Flat"
                                           Text="@(_compareLapId == lap.Id ? "Clear" : "Overlay")"
                                           ButtonStyle="@(_compareLapId == lap.Id ? ButtonStyle.Secondary : ButtonStyle.Base)"
+                                          @onclick:stopPropagation="true"
                                           Click="@(() => ToggleCompare(lap))" />
                         }
                     </Template>
