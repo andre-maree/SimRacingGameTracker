@@ -93,8 +93,14 @@ namespace GameTrackerWpfClientApp
             // Bring the local store up to date before any component can query it.
             using (var scope = _host.Services.CreateScope())
             {
-                await scope.ServiceProvider.GetRequiredService<ClientDbContext>()
-                    .Database.MigrateAsync();
+                var context = scope.ServiceProvider.GetRequiredService<ClientDbContext>();
+                await context.Database.MigrateAsync();
+
+                // Runs after the migration and before the UI: a database written by an
+                // earlier build can hold laps queued against no session at all, which the
+                // sessions grid reads as "uploaded". Cheap when there is nothing to fix,
+                // since the scan is a single indexed predicate.
+                await OrphanedTelemetryRepair.RunAsync(context, logger);
             }
 
             // Restore a previously persisted token before the UI renders, so a returning

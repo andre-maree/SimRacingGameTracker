@@ -372,6 +372,7 @@ public sealed class SessionStateMachine
 
         events.Add(new LapCompleted(
             frame.CapturedAtUtc,
+            _sessionId!.Value,
             _stintId!.Value,
             Guid.NewGuid(),
             lapNumber,

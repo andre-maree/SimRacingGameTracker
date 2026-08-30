@@ -39,8 +39,15 @@ public sealed record StintEnded(
 /// A lap crossed the line. Invalid laps are still emitted, with <paramref name="LapTime"/>
 /// null when the game never reported a time, so lap counts always reconcile.
 /// </summary>
+/// <remarks>
+/// <paramref name="SessionId"/> is carried on the event rather than left for the consumer
+/// to read from the state machine. The finishing lap of a session is harvested during the
+/// close, and by the time the batch is persisted the machine has already cleared its
+/// current session: an ambient read there attributes the lap to nothing at all.
+/// </remarks>
 public sealed record LapCompleted(
     DateTime OccurredAtUtc,
+    Guid SessionId,
     Guid StintId,
     Guid LapId,
     int LapNumber,

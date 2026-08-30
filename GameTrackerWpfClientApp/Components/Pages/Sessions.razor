@@ -70,15 +70,23 @@
             <RadzenDataGridColumn TItem="RecordedSessionRow" Title="Upload" Width="110px" Sortable="false">
                 <Template Context="session">
                     @* Surfaced per session so an offline backlog is visible rather than
-                       silently accumulating. *@
+                       silently accumulating. "Uploaded" is claimed only on positive
+                       evidence that laps were actually sent: an absence of queued rows is
+                       not the same thing, and treating it as such reported sessions that
+                       had never left the machine as safely delivered. *@
                     @if (session.PendingUploadCount > 0)
                     {
                         <RadzenBadge Text="@($"{session.PendingUploadCount} queued")"
                                      BadgeStyle="BadgeStyle.Warning" />
                     }
-                    else
+                    else if (session.UploadedCount > 0)
                     {
                         <RadzenBadge Text="Uploaded" BadgeStyle="BadgeStyle.Light" />
+                    }
+                    else
+                    {
+                        <RadzenBadge Text="Nothing to upload" BadgeStyle="BadgeStyle.Light"
+                                     title="No laps from this session are queued for upload." />
                     }
                 </Template>
             </RadzenDataGridColumn>
