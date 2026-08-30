@@ -65,8 +65,31 @@
     {
         // The handler raises SignedOut from a background thread on a 401, so the layout has
         // to re-render itself rather than waiting for a user interaction that may never come.
-        AuthState.SignedIn += OnAuthenticationChanged;
+        AuthState.SignedIn += OnSignedIn;
         AuthState.SignedOut += OnAuthenticationChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // A token restored at startup raises SignedIn before this layout exists, so that
+        // case is picked up here instead. Without it a returning user sees empty Cars and
+        // Tracks grids until they press the sync button themselves.
+        if (firstRender && AuthState.IsAuthenticated)
+        {
+            await SyncAsync();
+        }
+    }
+
+    private void OnSignedIn()
+    {
+        // The catalogue mirror is only filled by a sync, and a sign-in is the first moment
+        // one can succeed. Fired and forgotten on the renderer's context: the sign-in itself
+        // must not wait on a network pull.
+        _ = InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            await SyncAsync();
+        });
     }
 
     private void OnAuthenticationChanged() => InvokeAsync(StateHasChanged);
@@ -87,7 +110,15 @@
             return;
         }
 
+        // A sync raised by the sign-in event can overlap with a click on the button; the
+        // service turns the second caller away, but the busy state is this layout's own.
+        if (_syncing)
+        {
+            return;
+        }
+
         _syncing = true;
+        StateHasChanged();
 
         try
         {
@@ -106,6 +137,7 @@
         finally
         {
             _syncing = false;
+            StateHasChanged();
         }
     }
 
@@ -113,7 +145,7 @@
     {
         // AuthenticationState is a singleton and outlives this layout, so an un-removed
         // handler would keep it alive and render into a dead context.
-        AuthState.SignedIn -= OnAuthenticationChanged;
+        AuthState.SignedIn -= OnSignedIn;
         AuthState.SignedOut -= OnAuthenticationChanged;
     }
 }
