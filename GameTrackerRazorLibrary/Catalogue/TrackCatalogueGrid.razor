@@ -38,8 +38,10 @@
     [Parameter]
     public string EmptyText { get; set; } = "No tracks found.";
 
+    // Must stay null until the first load: Radzen only auto-invokes LoadData on first
+    // render when Data is null, so seeding an empty collection leaves the grid blank.
     private RadzenDataGrid<Track>? _grid;
-    private IEnumerable<Track> _tracks = [];
+    private IEnumerable<Track>? _tracks;
     private int _count;
     private bool _loading;
 

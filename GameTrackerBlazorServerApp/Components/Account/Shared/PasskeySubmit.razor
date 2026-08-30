@@ -35,6 +35,8 @@
 
     protected override void OnInitialized()
     {
-        tokens = Services.GetService<IAntiforgery>()?.GetTokens(HttpContext);
+        // GetAndStoreTokens (not GetTokens) also emits the companion antiforgery cookie,
+        // which the /Account/Passkey*Options endpoints require when validating the request token.
+        tokens = Services.GetService<IAntiforgery>()?.GetAndStoreTokens(HttpContext);
     }
 }
