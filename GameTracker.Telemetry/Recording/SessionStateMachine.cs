@@ -26,6 +26,12 @@ public sealed class SessionStateMachine
     /// </summary>
     private const double RestartToleranceSeconds = 0.5;
 
+    /// <summary>
+    /// R3E <c>SessionPhase.Checkered</c>. The flag has fallen and the session is over, even
+    /// though the car may still be rolling down the slow-down lap.
+    /// </summary>
+    private const int CheckeredPhase = 6;
+
     private Guid? _sessionId;
     private Guid? _stintId;
     private SessionType _sessionType;
@@ -33,7 +39,7 @@ public sealed class SessionStateMachine
     private int _trackExternalId;
     private int _stintNumber;
 
-    private double _lastSimulationTime;
+    private double? _lastSimulationTime;
     private int _lastCompletedLaps;
 
     /// <summary>
@@ -51,11 +57,25 @@ public sealed class SessionStateMachine
 
     private bool _inPitLane;
 
+    /// <summary>
+    /// Latched once the session reaches the checkered phase, so the eventual return to the
+    /// menus is recorded as <see cref="SessionEndReason.Completed"/> rather than
+    /// <see cref="SessionEndReason.Abandoned"/>.
+    /// </summary>
+    /// <remarks>
+    /// Latched rather than read at close time because the results screen tears the phase
+    /// down: by the frame the menu flag appears, the game may no longer report Checkered.
+    /// </remarks>
+    private bool _sawCheckeredFlag;
+
     /// <summary>True while a session is open and frames are being recorded.</summary>
     public bool IsRecording => _sessionId is not null;
 
     /// <summary>The open session, or null when idle. Used to tag persisted frames.</summary>
     public Guid? CurrentSessionId => _sessionId;
+
+    /// <summary>The last completed-lap count observed from the game, for diagnostics.</summary>
+    public int LastCompletedLaps => _lastCompletedLaps;
 
     /// <summary>The open stint, or null when idle.</summary>
     public Guid? CurrentStintId => _stintId;
@@ -73,9 +93,21 @@ public sealed class SessionStateMachine
 
         // Menus are the normal way a session ends: the player quits to the garage. Any lap
         // in progress is genuinely incomplete and must be discarded, not saved short.
-        if (frame.GameInMenus)
+        //
+        // Pausing and watching a replay both raise the same menu flag without the session
+        // having ended, so they are excluded: treating them as a quit would close a session
+        // the driver is still in the middle of.
+        if (frame.GameInMenus && !frame.GamePaused && !frame.GameInReplay)
         {
-            CloseSession(events, frame, SessionEndReason.Abandoned);
+            // A session that reached the flag before the player returned to the menus was
+            // finished, not abandoned. Without this distinction every completed race is
+            // recorded as abandoned, because leaving via the results screen looks identical
+            // to quitting mid-lap.
+            CloseSession(
+                events,
+                frame,
+                _sawCheckeredFlag ? SessionEndReason.Completed : SessionEndReason.Abandoned);
+
             return events;
         }
 
@@ -95,7 +127,13 @@ public sealed class SessionStateMachine
         // A restart is the case that silently corrupts data if missed: laps from the new
         // run would be appended to the old session. Simulation time going backwards is the
         // only dependable signal, since the car and track do not change on a restart.
-        if (frame.GameSimulationTime < _lastSimulationTime - RestartToleranceSeconds)
+        //
+        // Both readings must be available. An unavailable clock reads as the -1 sentinel,
+        // and comparing that against a running session's elapsed time looks like a huge
+        // decrease - a phantom restart that discards the lap in progress.
+        if (frame.GameSimulationTime is { } simulationTime &&
+            _lastSimulationTime is { } lastSimulationTime &&
+            simulationTime < lastSimulationTime - RestartToleranceSeconds)
         {
             CloseSession(events, frame, SessionEndReason.Restart);
             StartSession(events, frame, carId, trackId);
@@ -112,6 +150,11 @@ public sealed class SessionStateMachine
         }
 
         _lastSimulationTime = frame.GameSimulationTime;
+
+        if (frame.SessionPhase == CheckeredPhase)
+        {
+            _sawCheckeredFlag = true;
+        }
 
         ProcessPitTransitions(events, frame);
         ProcessLapCompletion(events, frame);
@@ -152,6 +195,8 @@ public sealed class SessionStateMachine
         // Anchor on the game's own lap count rather than assuming zero: joining a session
         // in progress (or a mid-session app start) must not replay laps already driven.
         _lastCompletedLaps = frame.CompletedLaps ?? 0;
+
+        _sawCheckeredFlag = frame.SessionPhase == CheckeredPhase;
 
         _stintNumber = 0;
         _inPitLane = frame.InPitLane;
@@ -301,11 +346,12 @@ public sealed class SessionStateMachine
         _sessionId = null;
         _stintId = null;
         _stintNumber = 0;
-        _lastSimulationTime = 0;
+        _lastSimulationTime = null;
         _lastCompletedLaps = 0;
         _currentLapValid = true;
         _currentLapTouchedPits = false;
         _inPitLane = false;
+        _sawCheckeredFlag = false;
     }
 
     /// <summary>

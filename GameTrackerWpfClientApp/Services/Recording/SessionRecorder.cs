@@ -159,7 +159,50 @@ public sealed class SessionRecorder : BackgroundService
 
     private async Task ProcessFrameAsync(TelemetryFrame frame, CancellationToken cancellationToken)
     {
+        var anchorBefore = _stateMachine.LastCompletedLaps;
+        var hadSession = _stateMachine.IsRecording;
+
         var events = _stateMachine.Process(frame);
+
+        // The lap counter is the sole input to lap detection, so every change in it is
+        // logged alongside whether a lap was actually emitted. A lap that the game counted
+        // but the recorder did not is otherwise invisible until the results are read back.
+        if (frame.CompletedLaps is { } completedLaps && completedLaps != anchorBefore && hadSession)
+        {
+            _logger.LogInformation(
+                "Lap counter {Before} -> {After} (game reports {Reported}); emitted {LapEvents} lap event(s), " +
+                "{Discarded} discarded. Phase={Phase} InPitLane={InPitLane} SimTime={SimTime}.",
+                anchorBefore,
+                _stateMachine.LastCompletedLaps,
+                completedLaps,
+                events.OfType<LapCompleted>().Count(),
+                events.OfType<PartialLapDiscarded>().Count(),
+                frame.SessionPhase,
+                frame.InPitLane,
+                frame.GameSimulationTime);
+        }
+
+        // A session ending is inferred, never announced by the game, so the frame that
+        // triggered it is logged in full. Without this the only visible symptom of a
+        // misread shared-memory field is a session that mysteriously reads 'Abandoned'.
+        foreach (var ended in events.OfType<SessionEnded>())
+        {
+            _logger.LogInformation(
+                "Session {SessionId} ended: {Reason}. Frame: InMenus={InMenus} SimTime={SimTime:F3} " +
+                "SessionType={SessionType} SessionPhase={SessionPhase} CarId={CarId} TrackId={TrackId} " +
+                "CompletedLaps={CompletedLaps} LapDistance={LapDistance} InPitLane={InPitLane}.",
+                ended.SessionId,
+                ended.Reason,
+                frame.GameInMenus,
+                frame.GameSimulationTime,
+                frame.SessionType,
+                frame.SessionPhase,
+                frame.CarExternalId,
+                frame.TrackExternalId,
+                frame.CompletedLaps,
+                frame.LapDistanceFraction,
+                frame.InPitLane);
+        }
 
         // Inputs are buffered only while a stint is genuinely open, so menu and garage
         // frames never leak into a lap's trace.

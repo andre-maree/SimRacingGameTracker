@@ -21,10 +21,28 @@ public sealed record TelemetryFrame
     /// The game's monotonically increasing simulation clock. A decrease is the primary
     /// signal that the session was restarted.
     /// </summary>
-    public required double GameSimulationTime { get; init; }
+    /// <remarks>
+    /// Nullable because RaceRoom blanks the player block to its <c>-1</c> sentinel whenever
+    /// the car is not under the player's control. Treating that -1 as a real reading makes
+    /// the clock appear to jump backwards by the whole elapsed session, which the state
+    /// machine would read as a restart and use to discard the lap in progress.
+    /// </remarks>
+    public required double? GameSimulationTime { get; init; }
 
     /// <summary>True when the player is sitting in the menus rather than on track.</summary>
     public required bool GameInMenus { get; init; }
+
+    /// <summary>
+    /// True while the game is paused. RaceRoom also raises <see cref="GameInMenus"/> for the
+    /// pause overlay, so this is what distinguishes a paused session from a quit one.
+    /// </summary>
+    public bool GamePaused { get; init; }
+
+    /// <summary>
+    /// True while a replay is being watched, which likewise raises <see cref="GameInMenus"/>
+    /// without the session having ended.
+    /// </summary>
+    public bool GameInReplay { get; init; }
 
     public required SessionType SessionType { get; init; }
 
