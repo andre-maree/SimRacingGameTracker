@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using GameTrackerWpfClientApp.Data;
@@ -28,6 +29,15 @@ namespace GameTrackerWpfClientApp
     {
         private IHost? _host;
 
+        // Machine-wide names: the guard has to hold across sessions, because two logged-on
+        // users polling the same shared-memory telemetry block would record duplicate laps.
+        private const string SingleInstanceMutexName = @"Global\GameTracker.DesktopClient.SingleInstance";
+        private const string SingleInstanceSignalName = @"Global\GameTracker.DesktopClient.Activate";
+
+        private Mutex? _singleInstanceMutex;
+        private EventWaitHandle? _activationSignal;
+        private CancellationTokenSource? _activationListenerCts;
+
         /// <summary>
         /// The application container. Exposed because <c>BlazorWebView.Services</c> is set
         /// from XAML code-behind, which sits outside the DI graph.
@@ -44,6 +54,18 @@ namespace GameTrackerWpfClientApp
         protected override async void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // Claimed before any other work: the database, the log file and the telemetry
+            // shared-memory reader are all single-writer resources, so a second process
+            // must never get as far as opening them.
+            if (!TryClaimSingleInstance())
+            {
+                SignalRunningInstance();
+                Shutdown();
+                return;
+            }
+
+            StartActivationListener();
 
             Directory.CreateDirectory(LocalDataPath);
 
@@ -115,6 +137,26 @@ namespace GameTrackerWpfClientApp
 
         protected override async void OnExit(ExitEventArgs e)
         {
+            _activationListenerCts?.Cancel();
+            _activationListenerCts?.Dispose();
+            _activationSignal?.Dispose();
+
+            if (_singleInstanceMutex is not null)
+            {
+                // Released explicitly rather than left to process teardown, so a crash-free
+                // exit never leaves the next launch waiting on an abandoned handle.
+                try
+                {
+                    _singleInstanceMutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                    // Not the owning thread; the handle is dropped by Dispose anyway.
+                }
+
+                _singleInstanceMutex.Dispose();
+            }
+
             if (_host is not null)
             {
                 // Give hosted services a chance to flush: unsaved recording state is worth
@@ -124,6 +166,96 @@ namespace GameTrackerWpfClientApp
             }
 
             base.OnExit(e);
+        }
+
+        /// <summary>
+        /// Takes ownership of the machine-wide mutex. Returns false when another instance
+        /// already holds it.
+        /// </summary>
+        private bool TryClaimSingleInstance()
+        {
+            _singleInstanceMutex = new Mutex(initiallyOwned: false, SingleInstanceMutexName);
+
+            try
+            {
+                // Zero timeout: this is a test for ownership, not a queue to join.
+                return _singleInstanceMutex.WaitOne(TimeSpan.Zero, exitContext: false);
+            }
+            catch (AbandonedMutexException)
+            {
+                // The previous instance died without releasing. Ownership has transferred
+                // to this wait, so this process is now the single instance.
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Asks the instance that is already running to surface its window, so a second
+        /// launch behaves like clicking the taskbar rather than doing nothing at all.
+        /// </summary>
+        private static void SignalRunningInstance()
+        {
+            try
+            {
+                if (EventWaitHandle.TryOpenExisting(SingleInstanceSignalName, out var signal))
+                {
+                    using (signal)
+                    {
+                        signal.Set();
+                    }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // The running instance belongs to another user account; nothing can be
+                // shown to this one, and exiting quietly is still the correct outcome.
+            }
+        }
+
+        /// <summary>
+        /// Watches for a second launch and brings the existing window to the foreground.
+        /// </summary>
+        private void StartActivationListener()
+        {
+            _activationSignal = new EventWaitHandle(false, EventResetMode.AutoReset, SingleInstanceSignalName);
+            _activationListenerCts = new CancellationTokenSource();
+
+            var signal = _activationSignal;
+            var token = _activationListenerCts.Token;
+
+            // A dedicated background thread rather than a task: this blocks for the whole
+            // lifetime of the process and has no business occupying a thread-pool slot.
+            var listener = new Thread(() =>
+            {
+                var handles = new[] { signal, token.WaitHandle };
+
+                while (WaitHandle.WaitAny(handles) == 0)
+                {
+                    Dispatcher.BeginInvoke(new Action(ActivateMainWindow));
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "SingleInstanceActivationListener"
+            };
+
+            listener.Start();
+        }
+
+        private void ActivateMainWindow()
+        {
+            if (MainWindow is null)
+            {
+                return;
+            }
+
+            if (MainWindow.WindowState == WindowState.Minimized)
+            {
+                MainWindow.WindowState = WindowState.Normal;
+            }
+
+            MainWindow.Show();
+            MainWindow.Activate();
         }
 
         private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
