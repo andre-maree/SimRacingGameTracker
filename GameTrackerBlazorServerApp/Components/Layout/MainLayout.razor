@@ -10,6 +10,18 @@
             <RadzenText TextStyle="TextStyle.H6" class="rz-my-0">GameTracker</RadzenText>
             <RadzenLink Path="/catalogue/cars" Text="Cars" />
             <RadzenLink Path="/catalogue/tracks" Text="Tracks" />
+            <AuthorizeView>
+                <Authorized>
+                    <RadzenStack Orientation="Orientation.Horizontal" AlignItems="AlignItems.Center" Gap="0.5rem" class="rz-ml-auto">
+                        <RadzenText TextStyle="TextStyle.Body2" class="rz-my-0">@context.User.Identity?.Name</RadzenText>
+                        <form action="Account/Logout" method="post">
+                            <AntiforgeryToken />
+                            <input type="hidden" name="ReturnUrl" value="Account/Login" />
+                            <button type="submit" class="rz-button rz-button-sm rz-variant-flat rz-light">Logout</button>
+                        </form>
+                    </RadzenStack>
+                </Authorized>
+            </AuthorizeView>
         </RadzenStack>
     </RadzenHeader>
     <RadzenBody>
