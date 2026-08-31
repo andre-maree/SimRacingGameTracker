@@ -420,5 +420,3 @@ These are deliberate trade-offs or stretch goals beyond the brief's scope. See `
 MIT — see `LICENSE.txt`.
 
 ---
-
-and `Docs/TODO.md` for deferred work._
