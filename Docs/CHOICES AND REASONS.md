@@ -108,7 +108,7 @@ Made `Constant` class and nested enums (`VersionMajor`, `VersionMinor`, `Session
 - ✅ Tokens encrypted at rest per user account
 - ✅ No third-party credential libraries
 - ❌ Tokens do not survive if the app is copied to another machine or user profile (acceptable — re-login required)
-- ❌ No refresh token flow yet (documented in TODO.md)
+No refresh token flow yet (documented in Docs/TODO.md)
 
 ---
 
@@ -258,7 +258,7 @@ stays readable at a glance.
 
 **Known limitation:** the overlay aligns on elapsed percentage, not distance travelled. If one lap
 contains an off-track excursion, the same percentage is no longer the same corner. Distance-based
-alignment is recorded in TODO.md.
+alignment is recorded in Docs/TODO.md.
 
 ---
 
@@ -280,7 +280,7 @@ alignment is recorded in TODO.md.
 
 ### What We Didn't Build (and why)
 
-1. **Refresh Token Flow** — deferred to TODO.md. The brief asks for 24-hour JWTs; a refresh flow adds complexity without demonstrating architectural skill beyond what login already shows.
+1. **Refresh Token Flow** — deferred to Docs/TODO.md.
 
 2. **Server-Side Telemetry Replay** — `GameTracker.Telemetry` targets `net10.0-windows`, so the server can't reference it. If replay is needed, split into `GameTracker.Telemetry` (pure state machine) and `GameTracker.Telemetry.R3E` (Windows memory-mapped). Not required for this brief.
 
@@ -344,7 +344,7 @@ alignment is recorded in TODO.md.
 | `README.md` | Clean-checkout setup, run commands, API surface, known weaknesses |
 | `Docs/PLAN.md` | Step-by-step implementation record (all 34 steps) |
 | `Docs/CHOICES AND REASONS.md` | This file — decisions, measurements, and trade-offs |
-| `TODO.md` | Deferred work, technical debt, and future enhancements |
+| `Docs/TODO.md` | Deferred work
 
 ---
 

@@ -165,10 +165,10 @@ GameTrackerSolution/
 ├── GameTrackerWpfClientApp/             # WPF app hosting Blazor via BlazorWebView
 ├── GameTrackerRazorLibrary/             # Shared Razor components
 ├── GameTrackerTestingConsoleApp/        # Throwaway spike console (used in step 2/6 of plan)
-├── TODO.md                              # Deferred work and known technical debt
-├── TESTPLAN.md                         # Clean-machine verification walkthrough
 └── Docs/
 	├── PLAN.md                          # Living implementation checklist
+	├── TODO.md                          # Deferred work and known technical debt
+	├── TESTPLAN.md                      # Clean-machine verification walkthrough
 	├── AZURE DEPLOYMENT.md              # JWT signing key and Key Vault setup
 	└── CHOICES AND REASONS.md           # Architecture decisions and justifications
 ```
@@ -323,7 +323,7 @@ See `Docs/CHOICES AND REASONS.md` for full write/read/storage cost analysis.
 ## What We Didn't Build
 
 ### Deliberately Omitted (with justification)
-- **Refresh token flow** — deferred to TODO.md; 24-hour JWTs are acceptable for a test
+- **Refresh token flow** — deferred to Docs/TODO.md
 - **Comprehensive test coverage** — the brief states "tests are not required and we're not scoring coverage"
 - **Visual polish** — the brief says "we are not scoring visual polish beyond stock Radzen"
 - **CI/CD or containerization** — out of scope per the brief
@@ -346,7 +346,7 @@ See `Docs/CHOICES AND REASONS.md` for full write/read/storage cost analysis.
 
 ## Known Weaknesses
 
-1. **JWT expiry = forced re-login** — no refresh token flow yet (see TODO.md)
+no refresh token flow yet (see Docs/TODO.md)
 2. **DPAPI tokens don't survive machine migration** — re-login required if the app is copied to a different user profile or machine
 3. **Input telemetry blobs are opaque to SQL** — queries like "laps where throttle exceeded 95%" require application-code decoding
 4. **No server-side telemetry replay** — `GameTracker.Telemetry` targets `net10.0-windows`, so the server can't reference it (would need a split into pure + interop)
@@ -421,4 +421,4 @@ MIT — see `LICENSE.txt`.
 
 ---
 
-_All 34 planned implementation steps are complete. See `Docs/PLAN.md` for the step-by-step record and `TODO.md` for deferred work._
+and `Docs/TODO.md` for deferred work._

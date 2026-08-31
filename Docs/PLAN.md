@@ -9,7 +9,7 @@ This is the living implementation checklist for the GameTracker technical test. 
 ## Steps
 
 ### ✅ Step 1: Create documentation scaffold
-- Create `Docs/PLAN.md`, `Docs/CHOICES AND REASONS.md`, `README.md`, `TODO.md`
+`README.md`, `Docs/TODO.md`
 - Seed TODO with refresh-token flow item
 
 ### ✅ Step 2: Create `GameTracker.Telemetry` library
@@ -351,7 +351,7 @@ This is the living implementation checklist for the GameTracker technical test. 
   preview cannot use a real time axis
 - Added the quantisation loss (1.5e-5) and lap-progress overlay alignment as explicit known
   weaknesses rather than leaving them implicit
-- TODO.md item 3 (two-lap overlay) marked implemented; remaining distance-alignment limitation
+- Docs/TODO.md item 3 (two-lap overlay)
   recorded instead
 - Removed the empty root `plan.md`, which duplicated `Docs/PLAN.md` in name only
 - Added a documentation map so the four docs' roles are unambiguous
