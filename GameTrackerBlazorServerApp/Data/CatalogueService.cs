@@ -37,9 +37,12 @@ public sealed class CatalogueService(ApplicationDbContext context, IAuthorizatio
 
         var total = await query.CountAsync(cancellationToken);
 
+        // Id breaks ties: Name/Manufacturer/Class/Year all repeat across the catalogue, and
+        // without a total order SQL Server may return tied rows differently for each
+        // OFFSET/FETCH page, which shows up as mis-sorted, duplicated or missing rows.
         query = string.IsNullOrWhiteSpace(orderBy)
-            ? query.OrderBy(c => c.Name)
-            : query.OrderBy(orderBy);
+            ? query.OrderBy(c => c.Name).ThenBy(c => c.Id)
+            : query.OrderBy(orderBy).ThenBy(c => c.Id);
 
         var items = await query.Skip(skip).Take(take).ToListAsync(cancellationToken);
         return new PagedResult<Car>(items, total);
@@ -57,9 +60,10 @@ public sealed class CatalogueService(ApplicationDbContext context, IAuthorizatio
 
         var total = await query.CountAsync(cancellationToken);
 
+        // See GetCarsAsync: the trailing Id keeps paged sorting deterministic.
         query = string.IsNullOrWhiteSpace(orderBy)
-            ? query.OrderBy(t => t.Name).ThenBy(t => t.LayoutName)
-            : query.OrderBy(orderBy);
+            ? query.OrderBy(t => t.Name).ThenBy(t => t.LayoutName).ThenBy(t => t.Id)
+            : query.OrderBy(orderBy).ThenBy(t => t.Id);
 
         var items = await query.Skip(skip).Take(take).ToListAsync(cancellationToken);
         return new PagedResult<Track>(items, total);
