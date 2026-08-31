@@ -233,6 +233,55 @@ All telemetry endpoints require a valid JWT bearer token in the `Authorization` 
 - Interrupted syncs resume exactly where they left off (no partial batches)
 - Deletions propagate as tombstones (`IsDeleted = true`), which the client purges
 
+#### The change cursor, and why the client clock is irrelevant
+The cursor is the server-issued `ServerVersion`, **never a timestamp**. Client clocks are wrong
+often enough — timezones, manual changes, VM snapshots, DST — that a time-based cursor silently
+drops rows: a client whose clock runs fast asks for changes since a future moment and never sees
+the rows written in between. Because the version comes from a single server-side sequence and the
+client only ever echoes back a number the server gave it, a wrong client clock cannot skip, reorder
+or duplicate a row. The client's clock is written to `SyncMetadata.LastSyncedAtUtc` for display
+only; nothing in the protocol reads it.
+
+`GET /api/sync/changes` pages Games, Cars and Tracks against that one shared cursor. Each table is
+paged independently and then trimmed to the **lowest** version any truncated table reached, so the
+published `NextVersion` can never run ahead of rows another table still owes the client. Publishing
+a higher cursor would skip those rows permanently, since the server only ever returns rows *above*
+the cursor.
+
+#### Deletions on the server
+Rows are never hard-deleted server-side. A delete stamps `IsDeleted = true` and allocates a fresh
+`ServerVersion`, so the deletion travels the same ordered path as any other change. The client
+applies a tombstone by removing the local row outright (`CatalogueSyncService`), keeping the local
+mirror small; the server retains the tombstone so a client that has been offline for months still
+learns about it. Without this, a delete that happened between two syncs would be invisible — the
+row simply wouldn't appear in any page, and the client would keep it forever.
+
+#### Interrupted sync partway through
+Each page is applied in **its own transaction, and the cursor is advanced inside that same
+transaction**. That ordering is the whole correctness argument: if the process is killed, the
+network drops, or the server goes away mid-run, the committed cursor still points at the last
+*fully applied* page. The next run re-requests the interrupted page rather than skipping it.
+Advancing the cursor before applying rows would lose them forever. Pages already applied before the
+interruption are deliberately kept rather than rolled back — resuming from the middle is cheaper
+than restarting from zero, and the result is identical either way. An unreachable server is
+reported as `Offline` rather than as a failure, since offline is this client's expected resting
+state.
+
+#### Concurrent runs
+Three layers, because there are three distinct races:
+- **Within a process** — sync is triggered from startup, a timer and a manual refresh button. A
+  `SemaphoreSlim(1,1)` gate admits one run; overlapping callers are *turned away, not queued*,
+  because a second immediate sync has nothing new to fetch. Two concurrent runs would share the
+  single cursor and race on the same rows.
+- **Across processes** — the WPF client claims a machine-wide named `Mutex` in `App.OnStartup`
+  before the database, log file or telemetry reader is opened. A second launch signals the running
+  instance (a named `EventWaitHandle`) to bring its window to the foreground and then exits. This
+  matters beyond sync: the local SQLite store and the RaceRoom shared-memory block are both
+  single-writer resources, and two instances would record duplicate laps. An `AbandonedMutexException`
+  is treated as a successful claim, so a prior crash never locks the user out.
+- **Against the server** — page reads are `AsNoTracking` and ordered by version, so a write landing
+  mid-page cannot corrupt a page; it simply arrives on the next one.
+
 ### Telemetry Recording Pipeline
 1. **Poll loop** — background task reads from RaceRoom shared memory at ~60 Hz
 2. **Producer** — writes `TelemetryFrame` to a bounded `Channel<T>` (drops oldest on overflow)
@@ -280,14 +329,18 @@ See `Docs/CHOICES AND REASONS.md` for full write/read/storage cost analysis.
 - **CI/CD or containerization** — out of scope per the brief
 
 ### Sync Edge Cases Handled
-- ✅ Interrupted sync (resumable via continuation token)
-- ✅ Deletions on server (tombstones propagated)
-- ✅ Wrong client clock (client never contributes to version calculation)
+- ✅ **Change cursor** — server-issued `ServerVersion` from a SQL `SEQUENCE`, shared across Games/Cars/Tracks and trimmed to the lowest truncated page
+- ✅ **Wrong client clock** — the client never contributes to the version calculation; no timestamp is used as a cursor
+- ✅ **Deletions on the server** — soft-deleted and versioned, propagated as tombstones, purged locally
+- ✅ **Interrupted sync** — per-page transactions with the cursor committed alongside the rows, so a killed run resumes at the last fully-applied page
+- ✅ **Concurrent runs** — in-process `SemaphoreSlim` gate, machine-wide `Mutex` single-instance guard on the WPF client, non-tracking ordered server reads
 
 ### Sync Edge Cases NOT Handled
 - ❌ Schema migrations mid-sync (would require a versioned sync protocol)
 - ❌ Conflicting writes from multiple clients (last-write-wins, no conflict resolution)
 - ❌ Byzantine client clocks (e.g., negative timestamps) — assumes well-behaved clients
+- ❌ Tombstone compaction — deleted rows are retained indefinitely so that arbitrarily stale clients converge; a production system would expire them past a retention window and force a full resync for clients older than it
+- ❌ Cross-machine instance locking — the single-instance guard is per machine, so the same user on two PCs can run two clients
 
 ---
 
