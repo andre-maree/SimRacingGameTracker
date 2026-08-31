@@ -346,8 +346,8 @@ See `Docs/CHOICES AND REASONS.md` for full write/read/storage cost analysis.
 
 ## Known Weaknesses
 
-no refresh token flow yet (see Docs/TODO.md)
-2. **DPAPI tokens don't survive machine migration** — re-login required if the app is copied to a different user profile or machine
+1. **JWT lifetime is fixed at 24 hours** — no refresh token flow yet (see `Docs/TODO.md`)
+2. **DPAPI tokens don't survive machine migration**
 3. **Input telemetry blobs are opaque to SQL** — queries like "laps where throttle exceeded 95%" require application-code decoding
 4. **No server-side telemetry replay** — `GameTracker.Telemetry` targets `net10.0-windows`, so the server can't reference it (would need a split into pure + interop)
 5. **Version gate is strict** — if RaceRoom updates the struct, the app refuses to start rather than attempting a best-effort parse
