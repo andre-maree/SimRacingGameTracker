@@ -382,7 +382,7 @@ then observe that uploads pause and resume after signing back in.
 2. **Expected:** the input trace chart renders throttle/brake/steering traces.
 3. Select a **second** lap to overlay.
    **Expected:** both traces render together for comparison.
-4. Known limitation, documented in `TODO.md` — the overlay aligns on lap progress, not distance,
+documented in `Docs/TODO.md`
    so laps of differing length will not line up perfectly. Confirm this is what you observe
    rather than treating it as a new bug.
 
